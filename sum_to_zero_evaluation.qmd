@@ -1,0 +1,636 @@
+---
+title: Stan 2.36 built-in constrained type `sum_to_zero_vector`
+jupyter: python3
+---
+
+
+```{python}
+# libraries used in this notebook
+import os
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+
+from cmdstanpy import CmdStanModel, cmdstan_path, cmdstan_version, rebuild_cmdstan
+
+import matplotlib
+%matplotlib inline
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+As of Stan 2.36, there is a built in `sum_to_zero_vector` type, which
+can be used as follows.
+
+```stan
+parameters {
+  sum_to_zero_vector[K] beta;
+  // ...
+}
+```
+
+This produces a vector of size `K` such that `sum(beta) = 0`.  In the
+unconstrained representation requires only `K - 1` values because the
+last is determined by the first `K - 1`.  
+
+
+### Methodology
+
+To compare different ways of imposing a sum-to-zero on a variable we consider two classes of models:  Multi-level models with group-level categorical predictors and models for areal data which contain an ICAR component.
+
+We compare speed, effective sample size, and goodness of fit.
+
+All models conatian a `generated quantities` block, which creates `y_rep`, the [posterior predictive sample](https://mc-stan.org/docs/stan-users-guide/posterior-prediction.html).    If the model is well-calibrated for the data, we expect that at least 50% of the time, the observed value of `y` will fall in the central 50% interval of the `y_rep` sample estimates.
+
+## Spatial models with sum-to-zero constrained parameters
+
+### The Intrinsic Conditional Auto-Regressive (ICAR) Model
+
+* Conditional specification: multivariate normal random vector $\mathbf{\phi}$
+where each ${\phi}_i$ is conditional on the values of its neighbors
+
+* Joint specification rewrites to _Pairwise Difference_:
+$$ p(\phi) \propto \exp \left\{ {- \frac{1}{2}} \sum_{i \sim j}{({\phi}_i - {\phi}_j)}^2 \right\} $$
+centered at 0, assuming common variance for all elements of $\phi$.
+
+* Each ${({\phi}_i - {\phi}_j)}^2$ contributes a
+penalty term based on the distance between the values of neighboring regions
+
+
+Use Stan's vectorized operations to compute log probability density:
+```stan
+   target += -0.5 * dot_self(phi[node1] - phi[node2]);
+```
+#### Sum-to-zero constraint on $\phi$
+
+$\phi$ is non-identifiable, constant added to $\phi$ washes out of ${\phi}_i - {\phi}_j$
+  + sum-to-zero constraint centers $\phi$
+
+
+#### Alternative encodings of neighborhood network
+
+* $N \times N$ Adjacency matrix - entries $(i,\ j)$ and $(j,\ i)$ are 1 when regions $n_i$ and $n_j$ are neighbors, 0 otherwise
+
+* Undirected graph: regions are vertices, pairs of neighbors are edges, encoded as a 2 column matrix, each row is a pair of neighbors $({n_i}, {n_j})$
+
+
+
+```stan
+  int<lower = 0> N;  // number of areal regions
+  // spatial structure
+  int<lower = 0> N_edges;  // number of neighbor pairs
+  array[2, N_edges] int<lower = 1, upper = N> neighbors;  // node[1, j] adjacent to node[2, j]
+```
+
+* Nodes are indexed from 1:N.
+* Edges indices are stored in a 2 x N array
+  + each column is an edge
+  + row 1: index of first node in edge pair, $n_i$
+  + row 2: index of second node in edge pair, $n_j$
+
+### The BYM2 model
+
+The BYM2 model combines both an ICAR component $\phi$ and an ordinary random effects $\theta$ as
+$$\left( (\sqrt{\, {\rho} / s}\, \ )\,\phi^* + (\sqrt{1-\rho})\,\theta^* \right) \sigma $$
+where parameter $\rho$ answers the question:  how much of the observed variance is spatial?
+
+* The joint specification of the ICAR rewrites to _Pairwise Difference_, centered at 0, assuming common variance for all elements of $\phi$.
+$$ p(\phi) \propto \exp \left\{ {- \frac{1}{2}} \sum_{i \sim j}{({\phi}_i - {\phi}_j)}^2 \right\} $$
+
+* $\phi$ is non-identifiable, constant added to $\phi$ washes out of ${\phi}_i - {\phi}_j$
+
+* sum-to-zero constraint centers $\phi$
+
+## Spatial Data Prep for ICAR, BYM2 models
+
+The dataset we're using is that used in the analysis published in 2019
+[Bayesian Hierarchical Spatial Models: Implementing the Besag York Mollié Model in Stan](https://www.sciencedirect.com/science/article/pii/S1877584518301175).
+
+The data consists of motor vehicle collisions in New York City,
+as recorded by the NYC Department of Transportation, between the years 2005-2014,
+restricted to collisions involving school age children 5-18 years of age as pedestrians.
+Each crash was localized to the US Census tract in which it occurred, using boundaries from the 2010 United States Census,
+using the [2010 Census block map for New York City](https://data.cityofnewyork.us/City-Government/2010-Census-Blocks/v2h8-6mxf)
+
+File `data/nyc_study.geojson` contains the study data and census tract ids and geometry.
+
+```{python}
+nyc_geodata = gpd.read_file(os.path.join('data', 'nyc_study.geojson'))
+nyc_geodata.columns
+```
+
+```{python}
+nyc_geodata[['BoroName', 'NTAName', 'count', 'kid_pop']].head(4)
+```
+
+```{python}
+nyc_geodata[['BoroName', 'NTAName', 'count', 'kid_pop']].tail(4)
+```
+
+The shapefiles from the Census Bureau connect Manhattan to Brooklyn and Queens, but for this analysis, Manhattan is quite separate from Brooklyn and Queens.  Getting the data assembled in the order required for our analysis requires data munging, encapsulated in the Python functions in file `utils_nyc_map.py` 
+
+```{python}
+%run utils_nyc_map
+(nyc_nbs, nyc_gdf) = nyc_sort_by_comp_size(nyc_geodata)
+```
+
+```{python}
+nyc_gdf[['BoroName', 'NTAName', 'count', 'kid_pop']].head(4)
+```
+
+```{python}
+nyc_gdf[['BoroName', 'NTAName', 'count', 'kid_pop']].tail(4)
+```
+
+```{python}
+from splot.libpysal import plot_spatial_weights 
+plot_spatial_weights(nyc_nbs, nyc_gdf)
+```
+
+To evaluate different sum-to-zero constraints, we must further subset this map to a single connected component; this is component id `0`.
+
+```{python}
+brklyn_qns_gdf = nyc_gdf[nyc_gdf['comp_id']==0].reset_index(drop=True)
+brklyn_qns_nbs = Rook.from_dataframe(brklyn_qns_gdf , geom_col='geometry')
+plot_spatial_weights(brklyn_qns_nbs, brklyn_qns_gdf ) 
+
+print(f'number of components: {brklyn_qns_nbs.n_components}')
+print(f'islands? {brklyn_qns_nbs.islands}')
+print(f'max number of neighbors per node: {brklyn_qns_nbs.max_neighbors}')
+print(f'mean number of neighbors per node: {brklyn_qns_nbs.mean_neighbors}')
+```
+
+Create data dictionary of inputs to the ICAR and BYM2 models.
+
+The data block for the BYM2 model is:
+
+```stan
+data {
+  int<lower=0> N;
+  array[N] int<lower=0> y; // count outcomes
+  vector<lower=0>[N] E; // exposure
+  int<lower=1> K; // num covariates
+  matrix[N, K] xs; // design matrix
+
+  // spatial structure
+  int<lower = 0> N_edges;  // number of neighbor pairs
+  array[2, N_edges] int<lower = 1, upper = N> neighbors;  // columnwise adjacent
+
+  real tau; // scaling factor
+}
+```
+
+The data block for the ICAR model is the same, minus the scaling factor `tau`.
+
+* Compute `N_edges`, `neighbors` given neighbor graph.
+
+```{python}
+brklyn_qns_nbs_adj =  brklyn_qns_nbs.to_adjlist(remove_symmetric=True)
+# create np.ndarray from columns in adjlist, increment indices by 1
+j1 = brklyn_qns_nbs_adj['focal'] + 1
+j2 = brklyn_qns_nbs_adj['neighbor'] + 1
+edge_pairs = np.vstack([j1, j2])
+edge_pairs.shape, edge_pairs
+```
+
+* Compute the scaling factor `tau`
+
+```{python}
+%run utils_bym2
+tau = get_scaling_factor(brklyn_qns_nbs)
+tau
+```
+
+* All columns of the predictor matrix should be roughly the same scale - assemble the design matrix and scale columns.
+
+```{python}
+design_vars = np.array(['pct_pubtransit','med_hh_inc', 'traffic', 'frag_index'])
+
+design_mat = brklyn_qns_gdf[design_vars].to_numpy()
+design_mat[:, 1] = np.log(design_mat[:, 1])
+design_mat[:, 2] = np.log(design_mat[:, 2])
+
+pd.DataFrame(data=design_mat).describe()
+```
+
+* Assemble the data dict
+
+```{python}
+nyc_data_dict = {"N":brklyn_qns_gdf .shape[0],
+             "y":brklyn_qns_gdf ['count'].astype('int'),
+             "E":brklyn_qns_gdf ['kid_pop'].astype('int'),
+             "K":design_mat.shape[1],
+             "xs":design_mat,
+             "N_edges": edge_pairs.shape[1],
+             "neighbors": edge_pairs,
+    	     "tau":tau
+            }
+```
+
+### Baseline (non-spatial) model - Poisson regression
+
+As a starting point, we consider a simple Poisson regression for this dataset which doesn't acount for spatial correlation between neighboring census tracts.
+
+```{python}
+poisson_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson.stan'))
+poisson_fit = poisson_mod.sample(data=nyc_data_dict)
+
+poisson_fit.summary().round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]']]
+```
+
+### Posterior Predictive Checks
+
+In the `generated quantities` block, we create the [posterior predictive sample](https://mc-stan.org/docs/stan-users-guide/posterior-prediction.html), `y_rep`.    If the model is well-calibrated for the data, we expect that at least 50% of the time, the observed value of `y` will fall in the central 50% interval of the `y_rep` sample estimates.
+
+```{python}
+%run utils_dataviz.py
+# Extract posterior predictive samples - shape (draws, N)
+y_rep = poisson_fit.stan_variable("y_rep")
+
+print(ppc_central_interval(y_rep, nyc_data_dict['y']))
+
+
+ppc_plot = plot_post_pred_check(y_rep, nyc_data_dict['y'], 
+                                'Poisson model, y (blue dot) vs. y_rep (orange 50% central interval, grep full extent)')
+ppc_plot
+```
+
+The posterior predictive checks demonstrate that this data cannot be fit by a simple poisson regression.   Therefore we move on to the next models:  the ICAR and BYM2 models.
+
+### ICAR evaluations
+
+```{python}
+icar_frazier_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_frazier.stan'))
+icar_frazier_fit = icar_frazier_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'icar_frazier'))
+```
+
+```{python}
+icar_soft_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_soft.stan'))
+icar_soft_fit = icar_soft_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'icar_soft'))
+```
+
+```{python}
+icar_hard_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_hard.stan'))
+icar_hard_fit = icar_hard_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'icar_hard'))
+```
+
+Get summaries and compare fits (note - we can also view the outputs using the MCMC_monitor)
+
+```{python}
+icar_frazier_summary = icar_frazier_fit.summary()
+icar_soft_summary = icar_soft_fit.summary()
+icar_hard_summary = icar_hard_fit.summary()
+```
+
+```{python}
+print("sum_to_zero_vector phi")
+icar_frazier_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+```
+
+```{python}
+print("soft sum to zero constrain phi")
+icar_soft_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+```
+
+```{python}
+print("hard sum to zero constrain phi")
+icar_hard_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+```
+
+Of these models, `icar_frazier` which uses the built-in `sum_to_zero_vec` runs the fasted and has the highest effective sample size.   The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size.  The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations but has slightly better effective sample size than the soft sum-to-zero sample.  All models fit and produce the same estimates for the group-level parameters.
+
+#### Posterior predictive checks
+
+```{python}
+y_rep = icar_frazier_fit.stan_variable("y_rep")
+
+print(ppc_central_interval(y_rep, nyc_data_dict['y']))
+
+
+ppc_plot = plot_post_pred_check(y_rep, nyc_data_dict['y'], 
+                                'ICAR model, y (blue dot) vs. y_rep (orange 50% central interval, grey full extent)')
+ppc_plot
+```
+
+The posterior predictive estimates are OK, but very noisy.
+
+### The BYM2 model
+
+```{python}
+bym2_frazier_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_frazier.stan'))
+bym2_frazier_fit = bym2_frazier_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'bym2_frazier'))
+```
+
+```{python}
+bym2_soft_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_soft.stan'))
+bym2_soft_fit = bym2_soft_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'bym2_soft'))
+```
+
+```{python}
+bym2_hard_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_hard.stan'))
+bym2_hard_fit = bym2_hard_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'bym2_hard'))
+```
+
+```{python}
+bym2_frazier_summary = bym2_frazier_fit.summary()
+bym2_soft_summary = bym2_soft_fit.summary()
+bym2_hard_summary = bym2_hard_fit.summary()
+```
+
+```{python}
+print("sum_to_zero_vector phi")
+bym2_frazier_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+```{python}
+#| scrolled: true
+print("soft sum to zero constrain phi")
+bym2_soft_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+```{python}
+print("hard sum to zero constrain phi")
+bym2_hard_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+Of these models, the bym2_frazier which uses the built-in sum_to_zero_vec runs the fasted and has the highest effective sample size. The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size. The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations. All models fit and produce the same estimates for the group-level parameters.
+
+#### Posterior predictive checks
+
+```{python}
+y_rep = bym2_frazier_fit.stan_variable("y_rep")
+print(ppc_central_interval(y_rep, nyc_data_dict['y']))
+ppc_plot = plot_post_pred_check(y_rep, nyc_data_dict['y'], 
+                                'ICAR model, y (blue dot) vs. y_rep (orange 50% central interval, grey full extent)')
+ppc_plot
+```
+
+### The BYM2 model for disconnected components and singletons
+
+#### Assemble data
+
+Data block of the Stan BYM2 model for disconnected components and islands:
+
+```
+  int<lower=0> N;
+  array[N] int<lower=0> y; // count outcomes
+  vector<lower=0>[N] E; // exposure
+  int<lower=1> K; // num covariates
+  matrix[N, K] xs; // design matrix
+
+  // neighbor graph structure
+  int<lower=0, upper=N> N_components;
+  array[N_components] int<lower=1, upper=N> component_sizes;
+  int<lower=0, upper=N> N_singletons;
+  int<lower = 0> N_edges;  // number of neighbor pairs
+  array[2, N_edges] int<lower = 1, upper = (N - N_singletons)> neighbors;  // columnwise adjacent
+  vector<lower=0>[N_components] scaling_factors;
+```
+
+Get study data
+
+```{python}
+nyc_geodata = gpd.read_file(os.path.join('data', 'nyc_study.geojson'))
+nyc_geodata.columns
+```
+
+```{python}
+%run utils_nyc_map
+nyc_nbs = Rook.from_dataframe(nyc_geodata, geom_col='geometry')
+from splot.libpysal import plot_spatial_weights 
+plot_spatial_weights(nyc_nbs, nyc_geodata)
+```
+
+The map shows that several tracts in Manhattan neighbor tracts in Brooklyn and Queens.
+For the purposes of our analysis, these need to be edited out.
+
+```{python}
+(nyc_nbs, nyc_gdf, sizes) = nyc_sort_by_comp_size(nyc_geodata)
+```
+
+Check dataframe, neighbors graph.
+
+```{python}
+plot_spatial_weights(nyc_nbs, nyc_gdf)
+```
+
+```{python}
+nyc_gdf[['NTAName', 'comp_id', 'comp_size']].head(4)
+```
+
+```{python}
+nyc_gdf[['NTAName', 'comp_id', 'comp_size']].tail(4)
+```
+
+Assemble Poisson regression covariates.
+
+```{python}
+N = nyc_gdf.shape[0]
+print("N", N)
+y = nyc_gdf['count'].astype(int).tolist()
+print("y", y[:7])
+E = nyc_gdf['kid_pop'].astype(int).tolist()
+print("E", E[:7])
+
+x_cols = ['pct_pubtransit', 'med_hh_inc', 'traffic', 'frag_index']
+K = len(x_cols)
+print("K", K)
+xs = nyc_gdf[x_cols].to_numpy()
+### we need to standardize xs
+xs[:, 1] = np.log(xs[:, 1])
+xs[:, 2] = np.log(xs[:, 2])
+
+print('xs', xs[:4, :])
+pd.DataFrame(data=xs).describe()
+```
+
+```{python}
+# compute number of components, sizes, and number of singleton nodes
+print(sizes)
+component_sizes = [x for x in sizes if x > 1]
+N_components = len(component_sizes)
+N_singletons = len(sizes) - N_components
+print("N_components ", N_components, " N_singletons ", N_singletons, " component_sizes ", component_sizes)
+```
+
+```{python}
+# compute neighbors array
+nbs_adj =  nyc_nbs.to_adjlist(remove_symmetric=True)
+print(nbs_adj.head(4))
+print(nbs_adj.tail(4))
+# create np.ndarray from columns in adjlist, increment indices by 1
+j1 = nbs_adj['focal'] + 1
+j2 = nbs_adj['neighbor'] + 1
+neighbors = np.vstack([j1, j2])
+N_edges = neighbors.shape[1]
+print("N_edges", N_edges)
+print("start array cols\n", neighbors[:, :10])
+print("end array cols\n", neighbors[:, -10:]) 
+```
+
+```{python}
+# get scaling factors
+%run utils_bym2
+
+scaling_factors = np.ones(N_components)
+for i in range(N_components):
+    comp_gdf = nyc_gdf[nyc_gdf['comp_id'] == i].reset_index(drop=True)
+    comp_nbs = Rook.from_dataframe(comp_gdf, geom_col='geometry')
+    # plot_spatial_weights(comp_nbs, comp_gdf)
+    component_w = W(comp_nbs.neighbors, comp_nbs.weights)
+    scaling_factors[i] = get_scaling_factor(component_w)
+
+print(scaling_factors)
+```
+
+```{python}
+# assemble nyc_data_dict
+nyc_data_dict = {
+    'N':N,
+    'y':y,
+    'E':E,
+    'K':K,
+    'xs':xs,
+    'N_components':N_components,
+    'component_sizes': component_sizes,
+    'N_singletons':N_singletons,
+    'N_edges':N_edges,
+    'neighbors':neighbors,
+    'scaling_factors': scaling_factors
+}
+```
+
+```{python}
+from cmdstanpy import write_stan_json
+write_stan_json("nyc_bym2_multicomp.json", nyc_data_dict)
+```
+
+## Fit model
+
+```{python}
+bym2_multicomp_soft = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp_soft.stan'))
+```
+
+```{python}
+bym2_multicomp_soft_path = bym2_multicomp_soft.pathfinder(data=nyc_data_dict, psis_resample=False, output_dir=os.path.join('mcmc_monitor', 'bym2_soft'))
+```
+
+```{python}
+path_inits = bym2_multicomp_soft_path.create_inits()
+```
+
+```{python}
+!rm -rf mcmc_monitor/bym2_soft/*
+```
+
+```{python}
+bym2_multicomp_soft_fit = bym2_multicomp_soft.sample(
+    data=nyc_data_dict,
+    max_treedepth=11,
+    output_dir=os.path.join('mcmc_monitor', 'bym2_soft'))
+```
+
+```{python}
+bym2_multicomp_frazier = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp_frazier.stan'))
+```
+
+```{python}
+!rm -rf mcmc_monitor/bym2_frazier/*
+```
+
+```{python}
+bym2_multicomp_frazier_fit = bym2_multicomp_frazier.sample(
+    data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'bym2_frazier'))
+```
+
+```{python}
+bym2_multicomp_frazier_summary = bym2_multicomp_frazier_fit.summary()
+bym2_multicomp_soft_summary = bym2_multicomp_soft_fit.summary()
+```
+
+```{python}
+print("sum_to_zero_vector phi")
+bym2_multicomp_frazier_summary.round(2).loc[
+  ['beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+```{python}
+print("soft sum to zero constrain phi")
+bym2_multicomp_soft_summary.round(2).loc[
+  ['beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+## Posterior Predictive Checks
+
+```{python}
+%run utils_dataviz.py
+
+y_rep_frazier = bym2_multicomp_frazier_fit.stan_variable("y_rep")
+print(ppc_central_interval(y_rep_frazier, nyc_data_dict['y']))
+ppc_plot_frazier = plot_post_pred_check(y_rep_frazier, nyc_data_dict['y'], 
+                                'BYM2 multicomp sum_to_zero_vector\ny (blue dot) vs. y_rep (orange 50% central interval, grey full extent)')
+ppc_plot_frazier
+```
+
+```{python}
+phi_draws = bym2_multicomp_frazier_fit.stan_variable('phi')
+phi_corr_frazier = upper_corr_matrix_to_df(phi_draws)
+plot_corr_frazier = plot_icar_corr_matrix(phi_corr_frazier, "Spatial Correlation vector phi\nBYM2 multicomp sum_to_zero_vector", size=(16,16))
+plot_corr_frazier
+```
+
+```{python}
+comp_1_gdf = nyc_gdf[nyc_gdf['comp_id']==1].reset_index(drop=True)
+phi_1_draws = bym2_multicomp_frazier_fit.stan_variable('phi_1')
+phi_1_corr = upper_corr_matrix_to_df(phi_1_draws_raw)
+plot_corr_comp_1 = plot_icar_corr_matrix(phi_1_corr, "Spatial Correlation phi_1\nBYM2 multicomp sum_to_zero_vector", size=(12,12))
+plot_corr_comp_1
+```
+
+```{python}
+comp_2_gdf = nyc_gdf[nyc_gdf['comp_id']==2].reset_index(drop=True)
+phi_2_draws = bym2_multicomp_frazier_fit.stan_variable('phi_2')
+phi_2_corr = upper_corr_matrix_to_df(phi_2_draws)
+plot_corr_comp_2 = plot_icar_corr_matrix(phi_2_corr, "Spatial Correlation phi_2\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_2
+```
+
+```{python}
+comp_3_gdf = nyc_gdf[nyc_gdf['comp_id']==3].reset_index(drop=True)
+phi_3_draws = bym2_multicomp_frazier_fit.stan_variable('phi_3')
+phi_3_corr = upper_corr_matrix_to_df(phi_3_draws)
+plot_corr_comp_3 = plot_icar_corr_matrix(phi_3_corr, "Spatial Correlation phi_3\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_3
+```
+
+```{python}
+comp_4_gdf = nyc_gdf[nyc_gdf['comp_id']==4].reset_index(drop=True)
+phi_4_draws = bym2_multicomp_frazier_fit.stan_variable('phi_4')
+phi_4_corr = upper_corr_matrix_to_df(phi_4_draws)
+plot_corr_comp_4 = plot_icar_corr_matrix(phi_4_corr, "Spatial Correlation phi_4\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_4
+```
+
+```{python}
+comp_5_gdf = nyc_gdf[nyc_gdf['comp_id']==5].reset_index(drop=True)
+phi_5_draws = bym2_multicomp_frazier_fit.stan_variable('phi_5')
+phi_5_corr = upper_corr_matrix_to_df(phi_5_draws)
+plot_corr_comp_5 = plot_icar_corr_matrix(phi_5_corr, "Spatial Correlation phi_5\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_5
+```
+
+Component 6 - Roosevelt Island - is a 2-node component.
+
+```{python}
+bym2_multicomp_frazier_summary.round(2).loc[['phi_6[1]', 'phi_6[2]']]
+```
+
+
+

@@ -1,0 +1,313 @@
+---
+title: BYM2 Disconnected Components and Islands
+jupyter: python3
+---
+
+
+
+```{python}
+# libraries used in this notebook
+import os
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+
+from cmdstanpy import CmdStanModel, cmdstan_path, cmdstan_version, rebuild_cmdstan
+
+import matplotlib
+%matplotlib inline
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+## Assemble data
+
+Data block of the Stan BYM2 model for disconnected components and islands:
+
+```
+  int<lower=0> N;
+  array[N] int<lower=0> y; // count outcomes
+  vector<lower=0>[N] E; // exposure
+  int<lower=1> K; // num covariates
+  matrix[N, K] xs; // design matrix
+
+  // neighbor graph structure
+  int<lower=0, upper=N> N_components;
+  array[N_components] int<lower=1, upper=N> component_sizes;
+  int<lower=0, upper=N> N_singletons;
+  int<lower = 0> N_edges;  // number of neighbor pairs
+  array[2, N_edges] int<lower = 1, upper = (N - N_singletons)> neighbors;  // columnwise adjacent
+  vector<lower=0>[N_components] scaling_factors;
+```
+
+```{python}
+%run utils_nyc_map
+```
+
+Get study data
+
+```{python}
+nyc_geodata = gpd.read_file(os.path.join('data', 'nyc_study.geojson'))
+nyc_geodata.columns
+```
+
+Edit map as needed.
+
+```{python}
+nyc_nbs = Rook.from_dataframe(nyc_geodata, geom_col='geometry')
+from splot.libpysal import plot_spatial_weights 
+plot_spatial_weights(nyc_nbs, nyc_geodata)
+```
+
+```{python}
+(nyc_nbs, nyc_gdf, sizes) = nyc_sort_by_comp_size(nyc_geodata)
+```
+
+Check dataframe, neighbors graph.
+
+```{python}
+plot_spatial_weights(nyc_nbs, nyc_gdf)
+```
+
+```{python}
+nyc_gdf[['NTAName', 'comp_id', 'comp_size']].head(4)
+```
+
+```{python}
+nyc_gdf[['NTAName', 'comp_id', 'comp_size']].tail(4)
+```
+
+Assemble Poisson regression covariates.
+
+```{python}
+N = nyc_gdf.shape[0]
+print("N", N)
+y = nyc_gdf['count'].astype(int).tolist()
+print("y", y[:7])
+E = nyc_gdf['kid_pop'].astype(int).tolist()
+print("E", E[:7])
+
+x_cols = ['pct_pubtransit', 'med_hh_inc', 'traffic', 'frag_index']
+K = len(x_cols)
+print("K", K)
+xs = nyc_gdf[x_cols].to_numpy()
+### we need to standardize xs
+xs[:, 1] = np.log(xs[:, 1])
+xs[:, 2] = np.log(xs[:, 2])
+
+print('xs', xs[:4, :])
+pd.DataFrame(data=xs).describe()
+```
+
+```{python}
+# compute number of components, sizes, and number of singleton nodes
+print(sizes)
+component_sizes = [x for x in sizes if x > 1]
+N_components = len(component_sizes)
+N_singletons = len(sizes) - N_components
+print("N_components ", N_components, " N_singletons ", N_singletons, " component_sizes ", component_sizes)
+```
+
+```{python}
+# compute neighbors array
+nbs_adj =  nyc_nbs.to_adjlist(remove_symmetric=True)
+print(nbs_adj.head(4))
+print(nbs_adj.tail(4))
+# create np.ndarray from columns in adjlist, increment indices by 1
+j1 = nbs_adj['focal'] + 1
+j2 = nbs_adj['neighbor'] + 1
+neighbors = np.vstack([j1, j2])
+N_edges = neighbors.shape[1]
+print("N_edges", N_edges)
+print("start array cols\n", neighbors[:, :10])
+print("end array cols\n", neighbors[:, -10:]) 
+```
+
+```{python}
+# get scaling factors
+%run utils_bym2
+
+scaling_factors = np.ones(N_components)
+for i in range(N_components):
+    comp_gdf = nyc_gdf[nyc_gdf['comp_id'] == i].reset_index(drop=True)
+    comp_nbs = Rook.from_dataframe(comp_gdf, geom_col='geometry')
+    # plot_spatial_weights(comp_nbs, comp_gdf)
+    component_w = W(comp_nbs.neighbors, comp_nbs.weights)
+    scaling_factors[i] = get_scaling_factor(component_w)
+
+print(scaling_factors)
+```
+
+```{python}
+# assemble nyc_data_dict
+nyc_data_dict = {
+    'N':N,
+    'y':y,
+    'E':E,
+    'K':K,
+    'xs':xs,
+    'N_components':N_components,
+    'component_sizes': component_sizes,
+    'N_singletons':N_singletons,
+    'N_edges':N_edges,
+    'neighbors':neighbors,
+    'scaling_factors': scaling_factors
+}
+```
+
+```{python}
+from cmdstanpy import write_stan_json
+write_stan_json("nyc_bym2_multicomp.json", nyc_data_dict)
+```
+
+## Fit model
+
+```{python}
+bym2_multicomp_soft = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp_soft.stan'))
+```
+
+```{python}
+bym2_multicomp_soft_path = bym2_multicomp_soft.pathfinder(data=nyc_data_dict, psis_resample=False, output_dir=os.path.join('mcmc_monitor', 'bym2_soft'))
+```
+
+```{python}
+path_inits = bym2_multicomp_soft_path.create_inits()
+```
+
+```{python}
+!rm -rf mcmc_monitor/bym2_soft/*
+```
+
+```{python}
+bym2_multicomp_soft_fit = bym2_multicomp_soft.sample(
+    data=nyc_data_dict,
+    max_treedepth=11,
+    output_dir=os.path.join('mcmc_monitor', 'bym2_soft'))
+```
+
+```{python}
+bym2_multicomp_frazier = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp_frazier.stan'))
+```
+
+```{python}
+!rm -rf mcmc_monitor/bym2_frazier/*
+```
+
+```{python}
+bym2_multicomp_frazier_fit = bym2_multicomp_frazier.sample(
+    data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'bym2_frazier'))
+```
+
+```{python}
+bym2_multicomp_frazier_summary = bym2_multicomp_frazier_fit.summary()
+bym2_multicomp_soft_summary = bym2_multicomp_soft_fit.summary()
+```
+
+```{python}
+print("sum_to_zero_vector phi")
+bym2_multicomp_frazier_summary.round(2).loc[
+  ['beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+```{python}
+print("soft sum to zero constrain phi")
+bym2_multicomp_soft_summary.round(2).loc[
+  ['beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+## Posterior Predictive Checks
+
+```{python}
+%run utils_dataviz.py
+
+y_rep_frazier = bym2_multicomp_frazier_fit.stan_variable("y_rep")
+print(ppc_central_interval(y_rep_frazier, nyc_data_dict['y']))
+ppc_plot_frazier = plot_post_pred_check(y_rep_frazier, nyc_data_dict['y'], 
+                                'BYM2 multicomp sum_to_zero_vector\ny (blue dot) vs. y_rep (orange 50% central interval, grey full extent)')
+ppc_plot_frazier
+```
+
+```{python}
+# Compute centroid coordinates for each tract:
+nyc_gdf['centroid'] = nyc_gdf.geometry.centroid
+nyc_gdf['centroid_x'] = nyc_gdf.centroid.x
+nyc_gdf['centroid_y'] = nyc_gdf.centroid.y
+
+# drop singletons
+gdf_connected = nyc_gdf.drop(nyc_gdf.index[-4:])
+
+
+# Sort from North to South, and within a latitude row, West to East, preserve index
+nyc_gdf_sorted = gdf_connected.sort_values(
+    ['centroid_y', 'centroid_x'], ascending=[False, True]).reset_index(drop=False)
+```
+
+```{python}
+phi_draws_raw = bym2_multicomp_frazier_fit.stan_variable('phi')
+#new_order = nyc_gdf_sorted['index'].values  # original indices, now rearranged
+#phi_draws = phi_draws_raw[:, new_order]
+
+phi_corr_frazier = upper_corr_matrix_to_df(phi_draws_raw)
+#print(phi_corr_frazier.head(4))
+
+plot_corr_frazier = plot_icar_corr_matrix(phi_corr_frazier, "Spatial Correlation vector phi\nBYM2 multicomp sum_to_zero_vector", size=(16,16))
+plot_corr_frazier
+```
+
+```{python}
+comp_1_gdf = nyc_gdf[nyc_gdf['comp_id']==1].reset_index(drop=True)
+phi_1_draws = bym2_multicomp_frazier_fit.stan_variable('phi_1')
+phi_1_corr = upper_corr_matrix_to_df(phi_1_draws_raw)
+plot_corr_comp_1 = plot_icar_corr_matrix(phi_1_corr, "Spatial Correlation phi_1\nBYM2 multicomp sum_to_zero_vector", size=(12,12))
+plot_corr_comp_1
+```
+
+```{python}
+comp_2_gdf = nyc_gdf[nyc_gdf['comp_id']==2].reset_index(drop=True)
+phi_2_draws = bym2_multicomp_frazier_fit.stan_variable('phi_2')
+phi_2_corr = upper_corr_matrix_to_df(phi_2_draws)
+plot_corr_comp_2 = plot_icar_corr_matrix(phi_2_corr, "Spatial Correlation phi_2\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_2
+```
+
+```{python}
+comp_3_gdf = nyc_gdf[nyc_gdf['comp_id']==3].reset_index(drop=True)
+phi_3_draws = bym2_multicomp_frazier_fit.stan_variable('phi_3')
+phi_3_corr = upper_corr_matrix_to_df(phi_3_draws)
+plot_corr_comp_3 = plot_icar_corr_matrix(phi_3_corr, "Spatial Correlation phi_3\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_3
+```
+
+```{python}
+comp_4_gdf = nyc_gdf[nyc_gdf['comp_id']==4].reset_index(drop=True)
+phi_4_draws = bym2_multicomp_frazier_fit.stan_variable('phi_4')
+phi_4_corr = upper_corr_matrix_to_df(phi_4_draws)
+plot_corr_comp_4 = plot_icar_corr_matrix(phi_4_corr, "Spatial Correlation phi_4\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_4
+```
+
+```{python}
+comp_4_gdf = nyc_gdf[nyc_gdf['comp_id']==4].reset_index(drop=True)
+phi_4_draws = bym2_multicomp_frazier_fit.stan_variable('phi_4')
+phi_4_corr = upper_corr_matrix_to_df(phi_4_draws)
+plot_corr_comp_4 = plot_icar_corr_matrix(phi_4_corr, "Spatial Correlation phi_4\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_4
+```
+
+```{python}
+comp_5_gdf = nyc_gdf[nyc_gdf['comp_id']==5].reset_index(drop=True)
+phi_5_draws = bym2_multicomp_frazier_fit.stan_variable('phi_5')
+phi_5_corr = upper_corr_matrix_to_df(phi_5_draws)
+plot_corr_comp_5 = plot_icar_corr_matrix(phi_5_corr, "Spatial Correlation phi_5\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_5
+```
+
+```{python}
+comp_6_gdf = nyc_gdf[nyc_gdf['comp_id']==6].reset_index(drop=True)
+phi_6_draws = bym2_multicomp_frazier_fit.stan_variable('phi_6')
+phi_6_corr = upper_corr_matrix_to_df(phi_6_draws)
+plot_corr_comp_6 = plot_icar_corr_matrix(phi_6_corr, "Spatial Correlation phi_6\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
+plot_corr_comp_6
+```
+
+
