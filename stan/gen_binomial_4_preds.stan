@@ -1,5 +1,5 @@
 data {
-  int<lower=1> N;
+  int<lower=1> N;  // total number of tests
   int<lower=1> N_age;
   int<lower=1> N_eth;
   int<lower=1> N_edu;
