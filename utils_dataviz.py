@@ -65,7 +65,7 @@ def plot_icar_corr_matrix(plot_df: pd.DataFrame, title: str, size: tuple[int, in
     return p
 
 
-def plot_post_pred_check(y_rep: np.ndarray, y: pd.Series, title:str) -> p9.ggplot:
+def plot_post_pred_check(y_rep: np.ndarray, y: pd.Series, title: str) -> p9.ggplot:
     y_rep_median = np.median(y_rep, axis=0)
     y_rep_lower = np.percentile(y_rep, 2.5, axis=0)
     y_rep_upper = np.percentile(y_rep, 97.5, axis=0)
@@ -106,3 +106,18 @@ def ppc_central_interval(y_rep: np.ndarray, y: pd.Series) -> str:
         f"y total: {y_rep.shape[1]}, "
         f"ct y is within y_rep central 50% interval: {within_50}, "
         f"pct: {100 * within_50 / y_rep.shape[1]}"))
+
+
+def ppc_density_plot(sim_data: pd.DataFrame, y_rep_pd: pd.DataFrame, sample_size: int, title: str, x_label: str) -> p9.ggplot:
+    ppc_dens_plot = p9.ggplot()
+    ppc_dens_plot = (ppc_dens_plot 
+                         + p9.stat_density(mapping=p9.aes(x=sim_data['pos_tests']), geom='line', color='darkblue', size=1.1)
+                         + p9.ggtitle(title)
+                         + p9.xlab(x_label) + p9.ylab("density")
+                         + p9.theme(figure_size=(10,5))
+         )
+    y_rep_sample = y_rep_pd.sample(sample_size).reset_index(drop=True).T
+    for i in range(sample_size):
+        ppc_dens_plot = (ppc_dens_plot
+                             + p9.stat_density(mapping=p9.aes(x=y_rep_sample[i]), geom='line', color='lightblue', alpha=0.2))
+    return ppc_dens_plot
