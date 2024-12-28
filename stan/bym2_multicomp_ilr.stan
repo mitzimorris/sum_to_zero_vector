@@ -17,8 +17,6 @@ data {
 transformed data {
   int N_components = 6;
   int N_connected = N - N_singletons;
-  print("component sizes ", component_sizes);
-  print("N_connected ", N_connected);
 
   // compute indices, vector of scaling factors
   vector<lower=0>[N_connected] taus;
@@ -33,8 +31,6 @@ transformed data {
       idx += 1;
     }
   }
-  print("beg_idx ", beg_idx);
-  print("end_idx", end_idx);
 
   vector[N] log_E = log(E);
   // center continuous predictors 
