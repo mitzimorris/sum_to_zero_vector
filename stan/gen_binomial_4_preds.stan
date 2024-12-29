@@ -17,12 +17,12 @@ generated quantities {
   real beta_sex = normal_rng(0, 0.5);
   vector[2] pct_sex = [0.4, 0.6]';
 
-  // increased risk with age, some variation in observations
   vector[N_age] pct_age = dirichlet_rng(rep_vector(2, N_age));
   vector[N_age] beta_age;
   for (n in 1:N_age) {
     beta_age[n] = std_normal_rng();
   }
+  // increased risk with age, some variation in observations
   // {
   // vector[N_age] beta_age_tmp;
   // for (n in 1:N_age) {
@@ -37,12 +37,12 @@ generated quantities {
     beta_eth[n] = std_normal_rng();
   }
 
-  // decreased risk with edu, some variation in observations
   vector[N_edu] pct_edu = dirichlet_rng(rep_vector(1.5, N_edu));
   vector[N_edu] beta_edu;
   for (n in 1:N_edu) {
     beta_edu[n] = std_normal_rng();
   }
+  // decreased risk with edu, some variation in observations
   // {
   // vector[N_edu] beta_edu_tmp;
   // for (n in 1:N_edu) {
