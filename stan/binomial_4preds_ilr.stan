@@ -19,8 +19,8 @@ data {
 transformed data {
   real mean_sex = mean(sex);
   vector[N] sex_c = to_vector(sex) - mean_sex;
-  real s_eth = sqrt(N_eth * inv(N_eth - 1));
   real s_age = sqrt(N_age * inv(N_age - 1));
+  real s_eth = sqrt(N_eth * inv(N_eth - 1));
   real s_edu = sqrt(N_edu * inv(N_edu - 1));
 }
 parameters {
@@ -41,14 +41,15 @@ model {
   pos_tests ~ binomial(tests, p_sample);  // likelihood
 
   // priors
-  beta_0 ~ normal(0, 10);
-  beta_sex ~ normal(0, 2.5);
-  beta_age ~ normal(0, sigma_age);
-  beta_eth ~ normal(0, sigma_eth);
-  beta_edu ~ normal(0, sigma_edu);
-  sigma_eth ~ normal(0, 2.5);
-  sigma_age ~ normal(0, 2.5);
-  sigma_edu ~ normal(0, 2.5);
+  beta_0 ~ normal(0, 2.5);
+  beta_sex ~ std_normal();
+  // centered parameterization
+  beta_age ~ normal(0, s_age * sigma_age);
+  beta_eth ~ normal(0, s_eth * sigma_eth);
+  beta_edu ~ normal(0, s_edu * sigma_edu);
+  sigma_eth ~ std_normal();
+  sigma_age ~ std_normal();
+  sigma_edu ~ std_normal();
 }
 generated quantities {
   real beta_intercept = beta_0 - mean_sex * beta_sex;
