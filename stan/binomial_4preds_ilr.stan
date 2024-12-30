@@ -15,8 +15,6 @@ data {
   // hyperparameters
   real<lower=0, upper=1> sens;
   real<lower=0, upper=1> spec;
-  real intercept_prior_mean;
-  real intercept_prior_scale;
 }
 transformed data {
   real mean_sex = mean(sex);
@@ -24,7 +22,6 @@ transformed data {
   real s_eth = sqrt(N_eth * inv(N_eth - 1));
   real s_age = sqrt(N_age * inv(N_age - 1));
   real s_edu = sqrt(N_edu * inv(N_edu - 1));
-  print("sum_to_zero_vector corrections ", s_age, ", ", s_eth, ", ", s_edu);
 }
 parameters {
   real beta_0;
@@ -44,14 +41,14 @@ model {
   pos_tests ~ binomial(tests, p_sample);  // likelihood
 
   // priors
-  beta_0 ~ normal(intercept_prior_mean, intercept_prior_scale);
-  beta_sex ~ std_normal();
+  beta_0 ~ normal(0, 10);
+  beta_sex ~ normal(0, 2.5);
   beta_age ~ normal(0, sigma_age);
   beta_eth ~ normal(0, sigma_eth);
   beta_edu ~ normal(0, sigma_edu);
-  sigma_age ~ normal(0, s_age);
-  sigma_eth ~ normal(0, s_eth);
-  sigma_edu ~ normal(0, s_edu);
+  sigma_eth ~ normal(0, 2.5);
+  sigma_age ~ normal(0, 2.5);
+  sigma_edu ~ normal(0, 2.5);
 }
 generated quantities {
   real beta_intercept = beta_0 - mean_sex * beta_sex;

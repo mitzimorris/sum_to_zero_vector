@@ -6,8 +6,7 @@ jupyter: python3
 ## Introducting the `sum_to_zero_vector` Constrained Parameter Type
 
 
-As of Stan 2.36, there is a built in `sum_to_zero_vector` type, which
-can be used as follows.
+As of Stan 2.36, there is a built in `sum_to_zero_vector` consrained parameter type:
 
 ```stan
 parameters {
@@ -197,21 +196,24 @@ sim_data = gen_mod.sample(data=gen_data_dict,
 * Examine the set of generated data-generating params and resulting dataset.
 
 ```{python}
-#| scrolled: true
 for var, value in sim_data.stan_variables().items():
-    print(var, value[0])  # draws array contains single draw
+    if isinstance(value, (int, float)):
+        print(var, value[0])
+    else:
+	print(var, value[0].head(10))
 ```
 
 ```{python}
 sim_df = pd.DataFrame({'tests':sim_data.tests[0], 'pos_tests':sim_data.pos_tests[0], 'p_sample':sim_data.p_sample[0] })
 sim_df['raw_prev'] = sim_df['pos_tests'] / sim_df['tests']
 (
-    p9.ggplot(sim_df, p9.aes(x='raw_prev'))
-    + p9.geom_density(color='black', fill='lightblue')
+    p9.ggplot(sim_df)
+    + p9.geom_density(p9.aes(x='raw_prev'), color='darkorange', fill='lightorange', alpha=0.5)
+    + p9.geom_density(p9.aes(x='p_sample'), color='darkblue', fill='lightblue', alpha=0.5)
     + p9.labs(
-        x='true prevalance',
+        x='raw prevalance',
         y='',
-        title='raw prevalence given test sensitivity, specificity across demographics'
+        title='raw (orange) and true (blue) prevalence given test sensitivity, specificity across demographics'
     )
     + p9.theme_minimal()
 )
@@ -298,6 +300,25 @@ print(binomial_ilr_fit.diagnose())
 print(binomial_hard_fit.diagnose())
 print(binomial_soft_fit.diagnose())
 ```
+
+**Calibration check**
+All models contian a `generated quantities` block, which creates `y_rep`,
+the [posterior predictive sample](https://mc-stan.org/docs/stan-users-guide/posterior-prediction.html).
+If the model is well-calibrated for the data, 
+we expect that at least 50% of the time the observed value of `y` will fall in the central 50% interval of the `y_rep` sample estimates.
+
+
+```{python}
+y_rep_ilr = binomial_ilr_fit.y_rep.astype(int)
+print("ILR fit", ppc_central_interval(y_rep_ilr, sim_data.pos_tests[0])
+
+y_rep_hard = binomial_hard_fit.y_rep.astype(int)
+print("Hard sum-to-zero fit", ppc_central_interval(y_rep_hard, sim_data.pos_tests[0])
+
+y_rep_soft = binomial_soft_fit.y_rep.astype(int)
+print("Soft sum-to-zero fit", ppc_central_interval(y_rep_soft, sim_data.pos_tests[0])
+```
+
 
 ### Model Comparison
 
@@ -418,18 +439,6 @@ soft_edu_summary
 ### Visualize the fit
 
 Plot the observed data values against the predicted data values for a random sample of the replicates.
-
-All models contian a `generated quantities` block, which creates `y_rep`,
-the [posterior predictive sample](https://mc-stan.org/docs/stan-users-guide/posterior-prediction.html).
-If the model is well-calibrated for the data, 
-we expect that at least 50% of the time the observed value of `y` will fall in the central 50% interval of the `y_rep` sample estimates.
-
-```{python}
-y_rep_ilr = binomial_ilr_fit.y_rep.astype(int)
-
-
-print(ppc_central_interval(y_rep_ilr, data_4_preds['y']))
-```
 
 ```{python}
 obs_vs_rep_ilr_df = pd.DataFrame(data={'sim_data pos_tests': sim_data.pos_tests[0].astype(int)});

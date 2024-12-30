@@ -15,8 +15,6 @@ data {
   // hyperparameters
   real<lower=0, upper=1> sens;
   real<lower=0, upper=1> spec;
-  real intercept_prior_mean;
-  real intercept_prior_scale;
 }
 transformed data {
   real mean_sex = mean(sex);
@@ -44,14 +42,14 @@ model {
   pos_tests ~ binomial(tests, p_sample);  // likelihood
 
   // priors
-  beta_0 ~ normal(intercept_prior_mean, intercept_prior_scale);
-  beta_sex ~ std_normal();
+  beta_0 ~ normal(0, 10);
+  beta_sex ~ normal(0, 2.5);
   beta_age ~ normal(0, sigma_age);
   beta_eth ~ normal(0, sigma_eth);
   beta_edu ~ normal(0, sigma_edu);
-  sigma_age ~ std_normal();
-  sigma_eth ~ std_normal();
-  sigma_edu ~ std_normal();
+  sigma_eth ~ normal(0, 2.5);
+  sigma_age ~ normal(0, 2.5);
+  sigma_edu ~ normal(0, 2.5);
   sum(beta_age) ~ normal(0, 0.001 * N_age); // soft sum-to-zero
   sum(beta_eth) ~ normal(0, 0.001 * N_eth);
   sum(beta_edu) ~ normal(0, 0.001 * N_edu);

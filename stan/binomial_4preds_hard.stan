@@ -15,8 +15,6 @@ data {
   // hyperparameters
   real<lower=0, upper=1> sens;
   real<lower=0, upper=1> spec;
-  real intercept_prior_mean;
-  real intercept_prior_scale;
 }
 parameters {
   real beta_0;
@@ -41,15 +39,14 @@ model {
   pos_tests ~ binomial(tests, prob_pos_test);  // likelihood
 
   // priors
-  beta_0 ~ normal(intercept_prior_mean, intercept_prior_scale);
-  beta_sex ~ std_normal();
+  beta_0 ~ normal(0, 10);
+  beta_sex ~ normal(0, 2.5);
   beta_age ~ normal(0, sigma_age);
   beta_eth ~ normal(0, sigma_eth);
   beta_edu ~ normal(0, sigma_edu);
-  sigma_eth ~ std_normal();
-  sigma_age ~ std_normal();
-  sigma_edu ~ std_normal();
-
+  sigma_eth ~ normal(0, 2.5);
+  sigma_age ~ normal(0, 2.5);
+  sigma_edu ~ normal(0, 2.5);
 }
 generated quantities {
   array[N] int<lower=0>y_rep = binomial_rng(tests, prob_pos_test);
