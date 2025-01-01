@@ -262,11 +262,11 @@ true_params
 #### Model 1: `sum_to_zero_vector`
 
 ```{python}
-binomial_ilr_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds_ilr.stan'))
+binomial_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds_ozs.stan'))
 ```
 
 ```{python}
-binomial_ilr_fit = binomial_ilr_mod.sample(data=data_4_preds, parallel_chains=4)
+binomial_ozs_fit = binomial_ozs_mod.sample(data=data_4_preds, parallel_chains=4)
 ```
 
 #### Model 2:  Hard sum-to-zero constraint
@@ -296,7 +296,7 @@ binomial_soft_fit = binomial_soft_mod.sample(data=data_4_preds, parallel_chains=
 Run CmdStan`s `diagnose` method to check model fits.
 
 ```{python}
-print(binomial_ilr_fit.diagnose())
+print(binomial_ozs_fit.diagnose())
 print(binomial_hard_fit.diagnose())
 print(binomial_soft_fit.diagnose())
 ```
@@ -309,8 +309,8 @@ we expect that at least 50% of the time the observed value of `y` will fall in t
 
 
 ```{python}
-y_rep_ilr = binomial_ilr_fit.y_rep.astype(int)
-print("ILR fit", ppc_central_interval(y_rep_ilr, sim_data.pos_tests[0])
+y_rep_ozs = binomial_ozs_fit.y_rep.astype(int)
+print("ILR fit", ppc_central_interval(y_rep_ozs, sim_data.pos_tests[0])
 
 y_rep_hard = binomial_hard_fit.y_rep.astype(int)
 print("Hard sum-to-zero fit", ppc_central_interval(y_rep_hard, sim_data.pos_tests[0])
@@ -328,10 +328,10 @@ Therefore we expect that all models produce the same estimates for the group-lev
 ```{python}
 # Use CmdStan's `stansummary` method to get summary statistics for all model parameters
 
-ilr_fit_summary = binomial_ilr_fit.summary(sig_figs=2)
-ilr_age_summary = ilr_fit_summary.filter(regex=r"\.*_age", axis=0)
-ilr_eth_summary = ilr_fit_summary.filter(regex=r"\.*_eth", axis=0)
-ilr_edu_summary = ilr_fit_summary.filter(regex=r"\.*_edu", axis=0)
+ozs_fit_summary = binomial_ozs_fit.summary(sig_figs=2)
+ozs_age_summary = ozs_fit_summary.filter(regex=r"\.*_age", axis=0)
+ozs_eth_summary = ozs_fit_summary.filter(regex=r"\.*_eth", axis=0)
+ozs_edu_summary = ozs_fit_summary.filter(regex=r"\.*_edu", axis=0)
 
 hard_fit_summary = binomial_hard_fit.summary(sig_figs=2)
 hard_age_summary = hard_fit_summary.filter(regex=r"\.*_age", axis=0)
@@ -351,7 +351,7 @@ soft_edu_summary = soft_fit_summary.filter(regex=r"\.*_edu", axis=0)
 
 ```{python}
 print("global intercept", sim_data.beta_0[0])
-ilr_fit_summary.loc[['beta_intercept', 'beta_0']]
+ozs_fit_summary.loc[['beta_intercept', 'beta_0']]
 ```
 
 ```{python}
@@ -364,7 +364,7 @@ soft_fit_summary.loc[['beta_intercept', 'beta_0']]
 
 **Sex**
 
-* the ilr model recodes the X matrix column `sex` as a zero-centered vector which is used to estimate `beta_sex`.
+* the ozs model recodes the X matrix column `sex` as a zero-centered vector which is used to estimate `beta_sex`.
 * the hard-sum-to-zero model codes `sex` as parameter `beta_sex_raw`, and in the transformed parameter block, defined `beta_sex[1]`, `beta_sex[2]`:
 
 ```stan
@@ -374,7 +374,7 @@ vector[2] beta_sex = [beta_sex_raw, -beta_sex_raw]';
 ```{python}
 print("coefficient sex", sim_data.beta_sex[0])
 print("per-category observation pcts hardcoded:  0.4, 0.6")
-ilr_fit_summary.loc[['beta_sex']]
+ozs_fit_summary.loc[['beta_sex']]
 ```
 
 ```{python}
@@ -390,8 +390,8 @@ soft_fit_summary.loc[['beta_sex']]
 ```{python}
 print("true coeffecients age", sim_data.beta_age[0])
 print("per-category observation pcts", sim_data.pct_age[0])
-ilr_age_summary = ilr_fit_summary.filter(regex=r"\.*_age", axis=0)
-ilr_age_summary
+ozs_age_summary = ozs_fit_summary.filter(regex=r"\.*_age", axis=0)
+ozs_age_summary
 ```
 
 ```{python}
@@ -407,8 +407,8 @@ soft_age_summary
 ```{python}
 print("true coeffecients eth", sim_data.beta_eth[0])
 print("per-category observation pcts", sim_data.pct_eth[0])
-ilr_eth_summary = ilr_fit_summary.filter(regex=r"\.*_eth", axis=0)
-ilr_eth_summary
+ozs_eth_summary = ozs_fit_summary.filter(regex=r"\.*_eth", axis=0)
+ozs_eth_summary
 ```
 
 ```{python}
@@ -424,8 +424,8 @@ soft_eth_summary
 ```{python}
 print("true coeffecients edu", sim_data.beta_edu[0])
 print("per-category observation pcts", sim_data.pct_edu[0])
-ilr_edu_summary = ilr_fit_summary.filter(regex=r"\.*_edu", axis=0)
-ilr_edu_summary
+ozs_edu_summary = ozs_fit_summary.filter(regex=r"\.*_edu", axis=0)
+ozs_edu_summary
 ```
 
 ```{python}
@@ -441,31 +441,31 @@ soft_edu_summary
 Plot the observed data values against the predicted data values for a random sample of the replicates.
 
 ```{python}
-obs_vs_rep_ilr_df = pd.DataFrame(data={'sim_data pos_tests': sim_data.pos_tests[0].astype(int)});
+obs_vs_rep_ozs_df = pd.DataFrame(data={'sim_data pos_tests': sim_data.pos_tests[0].astype(int)});
 for x in range(0,100):
     draw = randint(0, 80);
-    obs_vs_rep_ilr_df['iter ' + str(draw)] =  y_rep_ilr[draw]
-# obs_vs_rep_ilr_df
+    obs_vs_rep_ozs_df['iter ' + str(draw)] =  y_rep_ozs[draw]
+# obs_vs_rep_ozs_df
 
-obs_vs_rep_ilr_long = pd.melt(obs_vs_rep_ilr_df, id_vars=['sim_data pos_tests'], var_name='variable', value_name='value')
+obs_vs_rep_ozs_long = pd.melt(obs_vs_rep_ozs_df, id_vars=['sim_data pos_tests'], var_name='variable', value_name='value')
 
-ilr_ppc = (p9.ggplot(obs_vs_rep_ilr_long, p9.aes(x='sim_data pos_tests', y='value')) +
+ozs_ppc = (p9.ggplot(obs_vs_rep_ozs_long, p9.aes(x='sim_data pos_tests', y='value')) +
     p9.geom_jitter(alpha=0.3, color='darkblue') +
     p9.geom_abline(color='orange') +
     p9.labs(x='pos_tests (simulated)', y='Posterior estiimates', title='Sum-to-zero vector\nPosterior Predictive Check') +
     p9.theme(figure_size=(10,10))
     )
-ilr_ppc
+ozs_ppc
 ```
 
 Plot the distribution of the actual data against the predicted data values for a random sample of replicates.
 
 ```{python}
 # plot the distribution of the actual data against a random sample of replicates.
-yrep_ilr_pd = binomial_ilr_fit.draws_pd(vars='y_rep')
+yrep_ozs_pd = binomial_ozs_fit.draws_pd(vars='y_rep')
 
-ppc_plot_ilr = ppc_density_plot(sim_df, yrep_ilr_pd, 160, 'PPC sum_to_zero_vector', 'sim data dark blue, y_rep sample light blue')
-ppc_plot_ilr
+ppc_plot_ozs = ppc_density_plot(sim_df, yrep_ozs_pd, 160, 'PPC sum_to_zero_vector', 'sim data dark blue, y_rep sample light blue')
+ppc_plot_ozs
 ```
 
 ## Spatial models with sum-to-zero constrained parameters
@@ -732,8 +732,8 @@ The posterior predictive checks demonstrate that this data cannot be fit by a si
 ### ICAR evaluations
 
 ```{python}
-icar_ilr_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_ilr.stan'))
-icar_ilr_fit = icar_ilr_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'icar_ilr'))
+icar_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_ozs.stan'))
+icar_ozs_fit = icar_ozs_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'icar_ozs'))
 ```
 
 ```{python}
@@ -749,14 +749,14 @@ icar_hard_fit = icar_hard_mod.sample(data=nyc_data_dict, output_dir=os.path.join
 Get summaries and compare fits (note - we can also view the outputs using the MCMC_monitor)
 
 ```{python}
-icar_ilr_summary = icar_ilr_fit.summary()
+icar_ozs_summary = icar_ozs_fit.summary()
 icar_soft_summary = icar_soft_fit.summary()
 icar_hard_summary = icar_hard_fit.summary()
 ```
 
 ```{python}
 print("sum_to_zero_vector phi")
-icar_ilr_summary.round(2).loc[
+icar_ozs_summary.round(2).loc[
   ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
 ```
 
@@ -772,12 +772,12 @@ icar_hard_summary.round(2).loc[
   ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
 ```
 
-Of these models, `icar_ilr` which uses the built-in `sum_to_zero_vec` runs the fasted and has the highest effective sample size.   The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size.  The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations but has slightly better effective sample size than the soft sum-to-zero sample.  All models fit and produce the same estimates for the group-level parameters.
+Of these models, `icar_ozs` which uses the built-in `sum_to_zero_vec` runs the fasted and has the highest effective sample size.   The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size.  The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations but has slightly better effective sample size than the soft sum-to-zero sample.  All models fit and produce the same estimates for the group-level parameters.
 
 #### Posterior predictive checks
 
 ```{python}
-y_rep = icar_ilr_fit.stan_variable("y_rep")
+y_rep = icar_ozs_fit.stan_variable("y_rep")
 
 print(ppc_central_interval(y_rep, nyc_data_dict['y']))
 
@@ -792,8 +792,8 @@ The posterior predictive estimates are OK, but very noisy.
 ### The BYM2 model
 
 ```{python}
-bym2_ilr_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_ilr.stan'))
-bym2_ilr_fit = bym2_ilr_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'bym2_ilr'))
+bym2_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_ozs.stan'))
+bym2_ozs_fit = bym2_ozs_mod.sample(data=nyc_data_dict, output_dir=os.path.join('mcmc_monitor', 'bym2_ozs'))
 ```
 
 ```{python}
@@ -807,14 +807,14 @@ bym2_hard_fit = bym2_hard_mod.sample(data=nyc_data_dict, output_dir=os.path.join
 ```
 
 ```{python}
-bym2_ilr_summary = bym2_ilr_fit.summary()
+bym2_ozs_summary = bym2_ozs_fit.summary()
 bym2_soft_summary = bym2_soft_fit.summary()
 bym2_hard_summary = bym2_hard_fit.summary()
 ```
 
 ```{python}
 print("sum_to_zero_vector phi")
-bym2_ilr_summary.round(2).loc[
+bym2_ozs_summary.round(2).loc[
   ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
@@ -831,12 +831,12 @@ bym2_hard_summary.round(2).loc[
   ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
-Of these models, the bym2_ilr which uses the built-in sum_to_zero_vec runs the fasted and has the highest effective sample size. The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size. The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations. All models fit and produce the same estimates for the group-level parameters.
+Of these models, the bym2_ozs which uses the built-in sum_to_zero_vec runs the fasted and has the highest effective sample size. The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size. The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations. All models fit and produce the same estimates for the group-level parameters.
 
 #### Posterior predictive checks
 
 ```{python}
-y_rep = bym2_ilr_fit.stan_variable("y_rep")
+y_rep = bym2_ozs_fit.stan_variable("y_rep")
 print(ppc_central_interval(y_rep, nyc_data_dict['y']))
 ppc_plot = plot_post_pred_check(y_rep, nyc_data_dict['y'], 
                                 'ICAR model, y (blue dot) vs. y_rep (orange 50% central interval, grey full extent)')
@@ -986,11 +986,11 @@ write_stan_json("nyc_bym2_multicomp.json", nyc_data_dict)
 ## Fit model
 
 ```{python}
-bym2_multicomp_ilr = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp_ilr.stan'))
+bym2_multicomp_ozs = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp_ozs.stan'))
 ```
 
 ```{python}
-bym2_multicomp_ilr_fit = bym2_multicomp_ilr.sample(data=nyc_data_dict)
+bym2_multicomp_ozs_fit = bym2_multicomp_ozs.sample(data=nyc_data_dict)
 ```
 
 ```{python}
@@ -1004,13 +1004,13 @@ bym2_multicomp_soft_fit = bym2_multicomp_soft.sample(
 ```
 
 ```{python}
-bym2_multicomp_ilr_summary = bym2_multicomp_ilr_fit.summary()
+bym2_multicomp_ozs_summary = bym2_multicomp_ozs_fit.summary()
 bym2_multicomp_soft_summary = bym2_multicomp_soft_fit.summary()
 ```
 
 ```{python}
 print("sum_to_zero_vector phi")
-bym2_multicomp_ilr_summary.round(2).loc[
+bym2_multicomp_ozs_summary.round(2).loc[
   ['beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
@@ -1025,23 +1025,23 @@ bym2_multicomp_soft_summary.round(2).loc[
 ```{python}
 %run utils_dataviz.py
 
-y_rep_ilr = bym2_multicomp_ilr_fit.stan_variable("y_rep")
-print(ppc_central_interval(y_rep_ilr, nyc_data_dict['y']))
-ppc_plot_ilr = plot_post_pred_check(y_rep_ilr, nyc_data_dict['y'], 
+y_rep_ozs = bym2_multicomp_ozs_fit.stan_variable("y_rep")
+print(ppc_central_interval(y_rep_ozs, nyc_data_dict['y']))
+ppc_plot_ozs = plot_post_pred_check(y_rep_ozs, nyc_data_dict['y'], 
                                 'BYM2 multicomp sum_to_zero_vector\ny (blue dot) vs. y_rep (orange 50% central interval, grey full extent)')
-ppc_plot_ilr
+ppc_plot_ozs
 ```
 
 ```{python}
-phi_draws = bym2_multicomp_ilr_fit.stan_variable('phi')
-phi_corr_ilr = upper_corr_matrix_to_df(phi_draws)
-plot_corr_ilr = plot_icar_corr_matrix(phi_corr_ilr, "Spatial Correlation vector phi\nBYM2 multicomp sum_to_zero_vector", size=(16,16))
-plot_corr_ilr
+phi_draws = bym2_multicomp_ozs_fit.stan_variable('phi')
+phi_corr_ozs = upper_corr_matrix_to_df(phi_draws)
+plot_corr_ozs = plot_icar_corr_matrix(phi_corr_ozs, "Spatial Correlation vector phi\nBYM2 multicomp sum_to_zero_vector", size=(16,16))
+plot_corr_ozs
 ```
 
 ```{python}
 comp_1_gdf = nyc_gdf[nyc_gdf['comp_id']==1].reset_index(drop=True)
-phi_1_draws = bym2_multicomp_ilr_fit.stan_variable('phi_1')
+phi_1_draws = bym2_multicomp_ozs_fit.stan_variable('phi_1')
 phi_1_corr = upper_corr_matrix_to_df(phi_1_draws)
 plot_corr_comp_1 = plot_icar_corr_matrix(phi_1_corr, "Spatial Correlation phi_1\nBYM2 multicomp sum_to_zero_vector", size=(12,12))
 plot_corr_comp_1
@@ -1049,7 +1049,7 @@ plot_corr_comp_1
 
 ```{python}
 comp_2_gdf = nyc_gdf[nyc_gdf['comp_id']==2].reset_index(drop=True)
-phi_2_draws = bym2_multicomp_ilr_fit.stan_variable('phi_2')
+phi_2_draws = bym2_multicomp_ozs_fit.stan_variable('phi_2')
 phi_2_corr = upper_corr_matrix_to_df(phi_2_draws)
 plot_corr_comp_2 = plot_icar_corr_matrix(phi_2_corr, "Spatial Correlation phi_2\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
 plot_corr_comp_2
@@ -1057,7 +1057,7 @@ plot_corr_comp_2
 
 ```{python}
 comp_3_gdf = nyc_gdf[nyc_gdf['comp_id']==3].reset_index(drop=True)
-phi_3_draws = bym2_multicomp_ilr_fit.stan_variable('phi_3')
+phi_3_draws = bym2_multicomp_ozs_fit.stan_variable('phi_3')
 phi_3_corr = upper_corr_matrix_to_df(phi_3_draws)
 plot_corr_comp_3 = plot_icar_corr_matrix(phi_3_corr, "Spatial Correlation phi_3\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
 plot_corr_comp_3
@@ -1065,7 +1065,7 @@ plot_corr_comp_3
 
 ```{python}
 comp_4_gdf = nyc_gdf[nyc_gdf['comp_id']==4].reset_index(drop=True)
-phi_4_draws = bym2_multicomp_ilr_fit.stan_variable('phi_4')
+phi_4_draws = bym2_multicomp_ozs_fit.stan_variable('phi_4')
 phi_4_corr = upper_corr_matrix_to_df(phi_4_draws)
 plot_corr_comp_4 = plot_icar_corr_matrix(phi_4_corr, "Spatial Correlation phi_4\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
 plot_corr_comp_4
@@ -1073,7 +1073,7 @@ plot_corr_comp_4
 
 ```{python}
 comp_5_gdf = nyc_gdf[nyc_gdf['comp_id']==5].reset_index(drop=True)
-phi_5_draws = bym2_multicomp_ilr_fit.stan_variable('phi_5')
+phi_5_draws = bym2_multicomp_ozs_fit.stan_variable('phi_5')
 phi_5_corr = upper_corr_matrix_to_df(phi_5_draws)
 plot_corr_comp_5 = plot_icar_corr_matrix(phi_5_corr, "Spatial Correlation phi_5\nBYM2 multicomp sum_to_zero_vector", size=(6,6))
 plot_corr_comp_5
@@ -1082,7 +1082,7 @@ plot_corr_comp_5
 Component 6 - Roosevelt Island - is a 2-node component.
 
 ```{python}
-bym2_multicomp_ilr_summary.round(2).loc[['phi_6[1]', 'phi_6[2]']]
+bym2_multicomp_ozs_summary.round(2).loc[['phi_6[1]', 'phi_6[2]']]
 ```
 
 ## References
