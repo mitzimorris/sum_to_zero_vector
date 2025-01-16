@@ -38,7 +38,7 @@ functions {
       z[i] += sum_w;     
       z[i + 1] -= w * n;    
     }
-    target += normal_lpdf(z | 0, inv_sqrt(1 - inv(N + 1)));
+    // target += normal_lpdf(z | 0, inv_sqrt(1 - inv(N + 1)));
     return z;
   }
 }
