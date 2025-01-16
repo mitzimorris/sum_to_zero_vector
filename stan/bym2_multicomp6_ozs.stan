@@ -15,23 +15,6 @@ data {
   array[2, N_edges] int<lower = 1, upper = (N - N_singletons)> neighbors;  // columnwise adjacent
 }
 transformed data {
-  int N_components = 6;
-  int N_connected = N - N_singletons;
-
-  // compute indices, vector of scaling factors
-  vector<lower=0>[N_connected] taus;
-  array[N_components] int beg_idx;
-  array[N_components] int end_idx;
-  int idx = 1;
-  for (n in 1:N_components) {
-    beg_idx[n] = idx;
-    end_idx[n] = beg_idx[n] + component_sizes[n] - 1;
-    for (j in 1:component_sizes[n]) {
-      taus[idx] = scaling_factors[n];
-      idx += 1;
-    }
-  }
-
   vector[N] log_E = log(E);
   // center continuous predictors 
   vector[K] means_xs;  // column means of xs before centering
@@ -40,6 +23,23 @@ transformed data {
     means_xs[k] = mean(xs[, k]);
     xs_centered[, k] = xs[, k] - means_xs[k];
   }
+
+  int N_components = 6;
+  int N_connected = N - N_singletons;
+
+  // compute indices, vector of scaling factors
+  vector<lower=0>[N_connected] taus;
+  array[N_components, 2] int comp_idxs;
+  int idx = 1;
+  for (n in 1:N_components) {
+    comp_idxs[n, 1] = idx;
+    comp_idxs[n, 2] = idx + component_sizes[n] - 1;
+    for (j in 1:component_sizes[n]) {
+      taus[idx] = scaling_factors[n];
+      idx += 1;
+    }
+  }
+
 }
 parameters {
   real beta0;  // intercept
@@ -50,22 +50,23 @@ parameters {
   
   vector[N_connected] theta; // heterogeneous effects
   vector[N_singletons] singletons_re; // random effects for areas with no neighbours
-  // necessary because we can't create ragged arrays
-  vector[component_sizes[1]] phi_1;
-  vector[component_sizes[2]] phi_2;
-  vector[component_sizes[3]] phi_3;
-  vector[component_sizes[4]] phi_4;
-  vector[component_sizes[5]] phi_5;
-  vector[component_sizes[6]] phi_6;
+
+  // per-component ozs vectors
+  sum_to_zero_vector[component_sizes[1]] phi_1;
+  sum_to_zero_vector[component_sizes[2]] phi_2;
+  sum_to_zero_vector[component_sizes[3]] phi_3;
+  sum_to_zero_vector[component_sizes[4]] phi_4;
+  sum_to_zero_vector[component_sizes[5]] phi_5;
+  sum_to_zero_vector[component_sizes[6]] phi_6;
 }
 transformed parameters {
   vector[N_connected] phi;
-  phi[beg_idx[1]:end_idx[1]] = phi_1;
-  phi[beg_idx[2]:end_idx[2]] = phi_2;
-  phi[beg_idx[3]:end_idx[3]] = phi_3;
-  phi[beg_idx[4]:end_idx[4]] = phi_4;
-  phi[beg_idx[5]:end_idx[5]] = phi_5;
-  phi[beg_idx[6]:end_idx[6]] = phi_6;
+  phi[comp_idxs[1, 1]:comp_idxs[1, 2]] = phi_1;
+  phi[comp_idxs[2, 1]:comp_idxs[2, 2]] = phi_2;
+  phi[comp_idxs[3, 1]:comp_idxs[3, 2]] = phi_3;
+  phi[comp_idxs[4, 1]:comp_idxs[4, 2]] = phi_4;
+  phi[comp_idxs[5, 1]:comp_idxs[5, 2]] = phi_5;
+  phi[comp_idxs[6, 1]:comp_idxs[6, 2]] = phi_6;
   vector[N] gamma;  // convolved spatial random effect - Riebler BYM2
   gamma[1 : N_connected] =
     sqrt(1 - rho) * theta + sqrt(rho * inv(taus)) .* phi;
@@ -73,20 +74,13 @@ transformed parameters {
 }
 model {
   y ~ poisson_log(log_E + beta0 + xs_centered * betas + gamma * sigma);
-  rho ~ beta(0.5, 0.5);
-  target += -0.5 * dot_self(phi[neighbors[1]] - phi[neighbors[2]]); // ICAR
   beta0 ~ std_normal();
   betas ~ std_normal();
   theta ~ std_normal();
-  sigma ~ std_normal();
   singletons_re ~ std_normal();
-  // soft sum-to-zero constraints
-  sum(phi_1) ~ normal(0, component_sizes[1] * 0.001);
-  sum(phi_2) ~ normal(0, component_sizes[2] * 0.001);
-  sum(phi_3) ~ normal(0, component_sizes[3] * 0.001);
-  sum(phi_4) ~ normal(0, component_sizes[4] * 0.001);
-  sum(phi_5) ~ normal(0, component_sizes[5] * 0.001);
-  sum(phi_6) ~ normal(0, component_sizes[6] * 0.001);
+  sigma ~ std_normal();
+  rho ~ beta(0.5, 0.5);
+  target += -0.5 * dot_self(phi[neighbors[1]] - phi[neighbors[2]]); // ICAR
 }
 generated quantities {
   real beta0_intercept = beta0 - dot_product(means_xs, betas);  // adjust intercept
