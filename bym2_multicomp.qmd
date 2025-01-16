@@ -1,0 +1,221 @@
+---
+title: BYM2 Disconnected Components and Islands
+jupyter: python3
+---
+
+
+A graph component is a set of 2 or more nodes for which
+there is a path from any node in the component to every other node in that set.
+A component is a set of nodes and edge pairs where every node is a member
+of at least one edge pair.
+A fully connected graph is a graph consisting of a single component,
+so that it is possible to find a path from any node in the graph to every other node.
+As the census tract map of NYC shows,
+if the metric used to compute spatial adjacency is direct overland adjacency,
+then the neighbor graph of New York City is has several components and a few islands.
+
+In order to apply the BYM2 model to the NYC dataset, it is necessary to either:
+
+* Edit the neighbor graph to create a fully connected single component for NYC, or
+* Extend the BYM2 model to account for disconnected components and islands.
+
+In this notebook, we do the latter.
+
+In [A note on intrinsic Conditional Autoregressive models for disconnected graphs](https://arxiv.org/abs/1705.04854), Freni-Sterrantino et.al. provide the following recommendations:
+
+* Component nodes are given the BYM2 prior
+* Singleton nodes (islands) are given a standard Normal prior
+* Compute per-connected component scaling factor
+* Impose a sum-to-zero constraint on each connected component
+
+## Computational efficiency concerns
+
+
+```{python}
+# import all libraries used in this notebook
+import os
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import libpysal
+import matplotlib as plt
+import splot as splt
+from splot.libpysal import plot_spatial_weights 
+import plotnine as p9
+
+from cmdstanpy import CmdStanModel
+
+# suppress plotnine warnings
+import warnings
+warnings.filterwarnings('ignore')
+# setup plotnine look and feel global
+p9.theme_set(
+  p9.theme_grey() + 
+  p9.theme(text=p9.element_text(size=10),
+        plot_title=p9.element_text(size=14),
+        axis_title_x=p9.element_text(size=12),
+        axis_title_y=p9.element_text(size=12),
+        axis_text_x=p9.element_text(size=8),
+        axis_text_y=p9.element_text(size=8)
+       )
+)
+
+from utils_bym2 import get_scaling_factor
+from utils_nyc_map import nyc_sort_by_comp_size
+from utils_dataviz import *
+```
+
+## Assemble data
+
+Data block of the Stan BYM2 model for disconnected components and islands:
+
+```
+  int<lower=0> N;
+  array[N] int<lower=0> y; // count outcomes
+  vector<lower=0>[N] E; // exposure
+  int<lower=1> K; // num covariates
+  matrix[N, K] xs; // design matrix
+
+  // neighbor graph structure
+  int<lower=0, upper=N> N_components;
+  array[N_components] int<lower=1, upper=N> component_sizes;
+  int<lower=0, upper=N> N_singletons;
+  int<lower = 0> N_edges;  // number of neighbor pairs
+  array[2, N_edges] int<lower = 1, upper = (N - N_singletons)> neighbors;  // columnwise adjacent
+  vector<lower=0>[N_components] scaling_factors;
+```
+
+Get study data
+
+```{python}
+nyc_geodata = gpd.read_file(os.path.join('data', 'nyc_study.geojson'))
+nyc_geodata.columns
+```
+
+Edit map as needed.
+
+```{python}
+nyc_nbs = libpysal.weights.Rook.from_dataframe(nyc_geodata, geom_col='geometry')
+plot_spatial_weights(nyc_nbs, nyc_geodata)
+```
+
+Check dataframe, neighbors graph.
+
+```{python}
+(nyc_nbs, nyc_gdf, sizes) = nyc_sort_by_comp_size(nyc_geodata)
+plot_spatial_weights(nyc_nbs, nyc_gdf)
+```
+
+```{python}
+nyc_gdf[['NTAName', 'comp_id', 'comp_size']].head(4)
+```
+
+```{python}
+nyc_gdf[['NTAName', 'comp_id', 'comp_size']].tail(4)
+```
+
+Assemble Poisson regression covariates.
+
+```{python}
+N = nyc_gdf.shape[0]
+print("N", N)
+y = nyc_gdf['count'].astype(int).tolist()
+print("y", y[:7])
+E = nyc_gdf['kid_pop'].astype(int).tolist()
+print("E", E[:7])
+
+x_cols = ['pct_pubtransit', 'med_hh_inc', 'traffic', 'frag_index']
+K = len(x_cols)
+print("K", K)
+xs = nyc_gdf[x_cols].to_numpy()
+### we need to standardize xs
+xs[:, 1] = np.log(xs[:, 1])
+xs[:, 2] = np.log(xs[:, 2])
+
+print('xs', xs[:4, :])
+pd.DataFrame(data=xs).describe()
+```
+
+```{python}
+# compute number of components, sizes, and number of singleton nodes
+print(sizes)
+component_sizes = [x for x in sizes if x > 1]
+N_components = len(component_sizes)
+N_singletons = len(sizes) - N_components
+print("N_components ", N_components, " N_singletons ", N_singletons, " component_sizes ", component_sizes)
+print("N connected ", np.sum(component_sizes))
+```
+
+```{python}
+# compute neighbors array
+nbs_adj =  nyc_nbs.to_adjlist(remove_symmetric=True)
+print(nbs_adj.head(4))
+print(nbs_adj.tail(4))
+# create np.ndarray from columns in adjlist, increment indices by 1
+j1 = nbs_adj['focal'] + 1
+j2 = nbs_adj['neighbor'] + 1
+neighbors = np.vstack([j1, j2])
+N_edges = neighbors.shape[1]
+print("N_edges", N_edges)
+print("start array cols\n", neighbors[:, :10])
+print("end array cols\n", neighbors[:, -10:]) 
+```
+
+```{python}
+# get scaling factors
+
+rook_scaling_factors = np.ones(N_components)
+for i in range(N_components):
+    comp_gdf = nyc_gdf[nyc_gdf['comp_id'] == i].reset_index(drop=True)
+    comp_nbs = libpysal.weights.Rook.from_dataframe(comp_gdf, geom_col='geometry')
+    # plot_spatial_weights(comp_nbs, comp_gdf)
+    component_w = libpysal.weights.W(comp_nbs.neighbors, comp_nbs.weights)
+    rook_scaling_factors[i] = get_scaling_factor(component_w)
+
+print(rook_scaling_factors)
+```
+
+```{python}
+# assemble nyc_data_dict
+nyc_data_dict = {
+    'N':N,
+    'y':y,
+    'E':E,
+    'K':K,
+    'xs':xs,
+    'N_components':N_components,
+    'component_sizes': component_sizes,
+    'N_singletons':N_singletons,
+    'N_edges':N_edges,
+    'neighbors':neighbors,
+    'scaling_factors': rook_scaling_factors
+}
+```
+
+## Fit model
+
+```{python}
+bym2_multicompN_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicompN_ozs.stan'))
+```
+
+```{python}
+#| scrolled: true
+bym2_multicompN_fit = bym2_multicompN_mod.sample(data = nyc_data_dict, output_dir = 'foo')
+```
+
+```{python}
+bym2_multicomp6_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp6_ozs.stan'))
+```
+
+```{python}
+bym2_multicomp6_fit = bym2_multicomp6_mod.sample(data = nyc_data_dict, output_dir = 'bar')
+```
+
+```{python}
+bym2_multicompN_fit.summary().head(20).round(3)
+```
+
+```{python}
+bym2_multicomp6_fit.summary().head(20).round(3)
+```
+
