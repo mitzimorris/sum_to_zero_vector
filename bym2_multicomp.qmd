@@ -1,35 +1,20 @@
 ---
-title: BYM2 Disconnected Components and Islands
+title: Extending the BYM2 Model for Disconnected Graphs
+format:
+  html:
+    css: theming/quarto_styles.css
+    syntax-definitions:
+      - theming/stan.xml
+    embed-resources: true
+    toc: true
+    toc-location: left
+    grid:
+      body-width: 1000px
+execute:
+  eval: false
+  keep-ipynb: true
 jupyter: python3
 ---
-
-
-A graph component is a set of 2 or more nodes for which
-there is a path from any node in the component to every other node in that set.
-A component is a set of nodes and edge pairs where every node is a member
-of at least one edge pair.
-A fully connected graph is a graph consisting of a single component,
-so that it is possible to find a path from any node in the graph to every other node.
-As the census tract map of NYC shows,
-if the metric used to compute spatial adjacency is direct overland adjacency,
-then the neighbor graph of New York City is has several components and a few islands.
-
-In order to apply the BYM2 model to the NYC dataset, it is necessary to either:
-
-* Edit the neighbor graph to create a fully connected single component for NYC, or
-* Extend the BYM2 model to account for disconnected components and islands.
-
-In this notebook, we do the latter.
-
-In [A note on intrinsic Conditional Autoregressive models for disconnected graphs](https://arxiv.org/abs/1705.04854), Freni-Sterrantino et.al. provide the following recommendations:
-
-* Component nodes are given the BYM2 prior
-* Singleton nodes (islands) are given a standard Normal prior
-* Compute per-connected component scaling factor
-* Impose a sum-to-zero constraint on each connected component
-
-## Computational efficiency concerns
-
 
 ```{python}
 # import all libraries used in this notebook
@@ -63,6 +48,14 @@ p9.theme_set(
 from utils_bym2 import get_scaling_factor
 from utils_nyc_map import nyc_sort_by_comp_size
 from utils_dataviz import *
+```
+
+**R**
+```r
+library(sf)
+library(dplyr)
+library(spdep)
+source("utils_nyc_map.R")
 ```
 
 ## Assemble data
@@ -195,27 +188,16 @@ nyc_data_dict = {
 ## Fit model
 
 ```{python}
-bym2_multicompN_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicompN_ozs.stan'))
+bym2_multicomp_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp.stan'))
 ```
 
 ```{python}
 #| scrolled: true
-bym2_multicompN_fit = bym2_multicompN_mod.sample(data = nyc_data_dict, output_dir = 'foo')
+bym2_multicomp_fit = bym2_multicomp_mod.sample(data = nyc_data_dict, iter_warmup=3000, iter_sampling=2000)
 ```
 
 ```{python}
-bym2_multicomp6_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_multicomp6_ozs.stan'))
+bym2_multicomp_fit.summary().head(8).round(2)
 ```
 
-```{python}
-bym2_multicomp6_fit = bym2_multicomp6_mod.sample(data = nyc_data_dict, output_dir = 'bar')
-```
-
-```{python}
-bym2_multicompN_fit.summary().head(20).round(3)
-```
-
-```{python}
-bym2_multicomp6_fit.summary().head(20).round(3)
-```
 

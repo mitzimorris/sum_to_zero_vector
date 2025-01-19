@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 import scipy.sparse.linalg as splinalg
-from libpysal.weights import Rook
+from libpysal.weights import Queen
 
 def q_inv_dense(Q, A=None):
     # Compute the inverse of the sparse precision matrix Q
@@ -17,7 +17,7 @@ def q_inv_dense(Q, A=None):
         Sigma_const = Sigma - W @ np.linalg.inv(A @ W) @ W.T
         return Sigma_const
 
-def get_scaling_factor(nbs: Rook) -> np.float64:
+def get_scaling_factor(nbs: Queen) -> np.float64:
     """
     Compute the geometric mean of the spatial covariance matrix
     """
@@ -28,7 +28,6 @@ def get_scaling_factor(nbs: Rook) -> np.float64:
     Q = sp.diags(np.ravel(adj_matrix.sum(axis=1))) - adj_matrix
     # Add jitter to the diagonal for numerical stability
     Q_pert = Q + sp.eye(nbs.n) * np.max(Q.diagonal()) * np.sqrt(np.finfo(float).eps)
-
     # Compute the diagonal elements of the covariance matrix
     Q_inv = q_inv_dense(Q_pert, adj_matrix)
 
