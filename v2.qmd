@@ -1,0 +1,846 @@
+---
+title: The Sum-to-Zero Constraint in Stan
+jupyter: python3
+---
+
+```{python}
+# libraries used in this notebook
+import os
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import plotnine as p9
+import warnings
+from libpysal.weights import Rook
+from random import randint
+
+from cmdstanpy import CmdStanModel, write_stan_json, cmdstan_path, cmdstan_version, rebuild_cmdstan
+
+# from utils_dataviz import * # needed or not?
+from utils_nyc_map import nyc_sort_by_comp_size
+from utils_bym2 import get_scaling_fact, nbs_to_adjlist
+
+import matplotlib
+%matplotlib inline
+
+warnings.filterwarnings('ignore')
+```
+
+```{python}
+# notebook display options
+np.set_printoptions(precision=2)
+np.set_printoptions(suppress=True)
+pd.set_option('display.precision', 2)
+pd.options.display.float_format = '{:.2f}'.format
+```
+
+## Multi-level models with group-level categorical predictors
+
+In this section we consider a model which estimates per-demographic rates of disease prevalence for a population.
+
+The data is a set of per-demographic aggregated outcomes of a diagnostic test procedure with a specified sensitivity and specificity, and the demographic descriptor which is a vector of categorical values.
+For verisimilitude, these are named `sex`, `age`, `eth`, and `edu`, and for each category, there are unequal numbers of observations.
+In order to fit this model, we need to put a sum-to-zero constraint on the categorical variables.
+
+
+### The data generating model
+
+We have written a data-generating program to create datasets given the
+baseline disease prevalence, test specificity and sensitivity,
+the specified total number of diagnostic tests,
+and number of categories for `age`, `eth`, and `edu`, `N_age`, `N_eth`, and `N_edu`, respectively.
+The total number of observations is $2$ * `N_age` * `N_eth` * `N_edu`.
+
+```stan
+data {
+  int<lower=1> N;  // total number of tests
+  int<lower=1> N_age;
+  int<lower=1> N_eth;
+  int<lower=1> N_edu;
+  real baseline;
+  real<lower=0, upper=1> sens;
+  real<lower=0, upper=1> spec;
+}
+transformed data {
+  int strata = 2 * N_age * N_eth * N_edu;
+
+}
+```
+
+In the generated quantities block we first generate:
+
+* the true weights for the categorical coefficient vectors
+* the distribution of per-category observations
+
+```stan
+  real beta_0 = baseline;
+  // some difference by sex, unequal observations
+  real beta_sex = normal_rng(0, 0.5);
+  vector[2] pct_sex = [0.4, 0.6]';
+
+  vector[N_age] pct_age = dirichlet_rng(rep_vector(2, N_age));
+  vector[N_age] beta_age;
+  for (n in 1:N_age) {
+    beta_age[n] = std_normal_rng();
+  }
+  ...
+```
+
+Then we use a set of nested loops to generate the table of positivite tests, total tests per category.
+
+```stan
+  // compute aggregation by pcts
+  array[strata] int sex;
+  array[strata] int age;
+  array[strata] int eth;
+  array[strata] int edu;
+  array[strata] int pos_tests;
+  array[strata] int tests;
+  array[strata] real p;
+  array[strata] real p_sample;
+
+  int idx = 1;
+  for (i_sex in 1:2) {
+    for (i_age in 1:N_age) {
+      for (i_eth in 1:N_eth) {
+        for (i_edu in 1:N_edu) {
+          sex[idx] = i_sex;
+          age[idx] = i_age;
+          eth[idx] = i_eth;
+          edu[idx] = i_edu;
+          tests[idx] = to_int(pct_sex[i_sex] * pct_age[i_age] * pct_eth[i_eth] * pct_edu[i_edu] * N);
+          p[idx] = inv_logit(beta_0 + beta_sex * (i_sex)
+                    + beta_age[i_age] + beta_eth[i_eth] +  beta_edu[i_edu]);
+          p_sample[idx] = p[idx] * sens + (1 - p[idx]) * (1 - spec);
+          pos_tests[idx] = binomial_rng(tests[idx], p_sample[idx]);
+          idx += 1;
+        }
+      }
+    }
+  }
+```
+
+With this program, we can observe how the different implementations perform under different amounts of data.
+
+
+* Instantiate the data generating model.
+
+```{python}
+gen_mod = CmdStanModel(stan_file=os.path.join('stan', 
+                                              'gen_binomial_4_preds.stan'))
+```
+
+* Choose total number of observations and number of categories for age, eth, and edu.
+
+```{python}
+gen_data_dict = {'N':90_000,
+                 'N_age':10,
+                 'N_eth':3,
+                 'N_edu':8,
+                'baseline': -3.9,
+                'sens': 0.75,
+                'spec': 0.9995}
+print("total strata",
+      (2 * gen_data_dict['N_age'] * gen_data_dict['N_eth'] * gen_data_dict['N_edu']))
+```
+
+* Run 1 sampling iteration to get a complete dataset.
+
+```{python}
+sim_data = gen_mod.sample(data=gen_data_dict,
+                          iter_warmup=1, iter_sampling=1, chains=1)
+```
+
+* Examine the set of generated data-generating params and resulting dataset.
+
+```{python}
+for var, value in sim_data.stan_variables().items():
+    if isinstance(value, (int, float)):
+        print(var, value[0])
+    else:
+	print(var, value[0].head(10))
+```
+
+```{python}
+sim_df = pd.DataFrame({'tests':sim_data.tests[0], 'pos_tests':sim_data.pos_tests[0], 'p_sample':sim_data.p_sample[0] })
+sim_df['raw_prev'] = sim_df['pos_tests'] / sim_df['tests']
+(
+    p9.ggplot(sim_df)
+    + p9.geom_density(p9.aes(x='raw_prev'), color='darkorange', fill='lightorange', alpha=0.5)
+    + p9.geom_density(p9.aes(x='p_sample'), color='darkblue', fill='lightblue', alpha=0.5)
+    + p9.labs(
+        x='raw prevalance',
+        y='',
+        title='raw (orange) and true (blue) prevalence given test sensitivity, specificity across demographics'
+    )
+    + p9.theme_minimal()
+)
+```
+
+### Model Fitting
+
+Assemble the data dictionary of all input data for the model which solves the inverse problem - i.e., estimates regression coefficients given the observed data.  We use the generated data as the inputs.  Because the output files are real-valued outputs, regardless of variable element type, model data variables of type int need to be cast to int.  Here all the observed data is count and categorial data.
+
+```{python}
+data_4_preds = {'N':sim_data.pos_tests.shape[1], 
+                'N_age':gen_data_dict['N_age'], 
+                'N_eth':gen_data_dict['N_eth'],
+                'N_edu':gen_data_dict['N_edu'],
+                'pos_tests':sim_data.pos_tests[0].astype(int),
+                'tests':sim_data.tests[0].astype(int),
+                'sex':sim_data.sex[0].astype(int),
+                'age':sim_data.age[0].astype(int), 
+                'eth':sim_data.eth[0].astype(int),
+                'edu':sim_data.edu[0].astype(int),
+                'sens': gen_data_dict['sens'],
+                'spec': gen_data_dict['spec'],
+                'intercept_prior_mean': gen_data_dict['baseline'],
+                'intercept_prior_scale': 2.5}
+
+# print(data_4_preds)
+```
+
+* Capture the data-generating params
+
+```{python}
+true_params = {
+    'beta_0': sim_data.beta_0[0],
+    'pct_sex': sim_data.pct_sex[0],
+    'beta_sex': sim_data.beta_sex[0],
+    'pct_age': sim_data.pct_age[0],
+    'beta_age':sim_data.beta_age[0],
+    'pct_eth': sim_data.pct_eth[0],
+    'beta_eth':sim_data.beta_eth[0],
+    'pct_edu': sim_data.pct_edu[0],
+    'beta_edu':sim_data.beta_edu[0]
+}
+true_params
+```
+
+#### Model 1: `sum_to_zero_vector`
+
+```{python}
+binomial_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds_ozs.stan'))
+```
+
+```{python}
+binomial_ozs_fit = binomial_ozs_mod.sample(data=data_4_preds, parallel_chains=4)
+```
+
+#### Model 2:  Hard sum-to-zero constraint
+
+Run the sampler to get posterior estimates of the model conditioned on the data. 
+
+```{python}
+binomial_hard_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds_hard.stan'))
+```
+
+```{python}
+binomial_hard_fit = binomial_hard_mod.sample(data=data_4_preds, parallel_chains=4)
+```
+
+#### Model 3:  soft sum-to-zero constraint
+
+```{python}
+binomial_soft_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds_soft.stan'))
+```
+
+```{python}
+binomial_soft_fit = binomial_soft_mod.sample(data=data_4_preds, parallel_chains=4)
+```
+
+### Model Checking
+
+Run CmdStan`s `diagnose` method to check model fits.
+
+```{python}
+print(binomial_ozs_fit.diagnose())
+print(binomial_hard_fit.diagnose())
+print(binomial_soft_fit.diagnose())
+```
+
+**Calibration check**
+All models contian a `generated quantities` block, which creates `y_rep`,
+the [posterior predictive sample](https://mc-stan.org/docs/stan-users-guide/posterior-prediction.html).
+If the model is well-calibrated for the data, 
+we expect that at least 50% of the time the observed value of `y` will fall in the central 50% interval of the `y_rep` sample estimates.
+
+```{python}
+y_rep_ozs = binomial_ozs_fit.y_rep.astype(int)
+print("ILR fit", ppc_central_interval(y_rep_ozs, sim_data.pos_tests[0])
+
+y_rep_hard = binomial_hard_fit.y_rep.astype(int)
+print("Hard sum-to-zero fit", ppc_central_interval(y_rep_hard, sim_data.pos_tests[0])
+
+y_rep_soft = binomial_soft_fit.y_rep.astype(int)
+print("Soft sum-to-zero fit", ppc_central_interval(y_rep_soft, sim_data.pos_tests[0])
+```
+
+### Model Comparison
+
+If correctly implements, the all three sum-to-zero constraints should properly identify the model in the same way.
+Therefore we expect that all models produce the same estimates for the group-level parameters.
+
+```{python}
+# Use CmdStan's `stansummary` method to get summary statistics for all model parameters
+
+ozs_fit_summary = binomial_ozs_fit.summary(sig_figs=2)
+ozs_age_summary = ozs_fit_summary.filter(regex=r"\.*_age", axis=0)
+ozs_eth_summary = ozs_fit_summary.filter(regex=r"\.*_eth", axis=0)
+ozs_edu_summary = ozs_fit_summary.filter(regex=r"\.*_edu", axis=0)
+
+hard_fit_summary = binomial_hard_fit.summary(sig_figs=2)
+hard_age_summary = hard_fit_summary.filter(regex=r"\.*_age", axis=0)
+hard_eth_summary = hard_fit_summary.filter(regex=r"\.*_eth", axis=0)
+hard_edu_summary = hard_fit_summary.filter(regex=r"\.*_edu", axis=0)
+
+soft_fit_summary = binomial_soft_fit.summary(sig_figs=2)
+soft_age_summary = soft_fit_summary.filter(regex=r"\.*_age", axis=0)
+soft_eth_summary = soft_fit_summary.filter(regex=r"\.*_eth", axis=0)
+soft_edu_summary = soft_fit_summary.filter(regex=r"\.*_edu", axis=0)
+```
+
+**Global intercept**
+
+* the hard-sum-to-zero model codes the global intercept as `beta_0`.
+* the soft-sum-to-zero model 0-centers the binary predictor `sex`; `beta_intercept` accounts for this centering.
+
+```{python}
+print("global intercept", sim_data.beta_0[0])
+ozs_fit_summary.loc[['beta_intercept', 'beta_0']]
+```
+
+```{python}
+hard_fit_summary.loc[['beta_0']]
+```
+
+```{python}
+soft_fit_summary.loc[['beta_intercept', 'beta_0']]
+```
+
+**Sex**
+
+* the ozs model recodes the X matrix column `sex` as a zero-centered vector which is used to estimate `beta_sex`.
+* the hard-sum-to-zero model codes `sex` as parameter `beta_sex_raw`, and in the transformed parameter block, defined `beta_sex[1]`, `beta_sex[2]`:
+
+```stan
+vector[2] beta_sex = [beta_sex_raw, -beta_sex_raw]';
+```
+
+```{python}
+print("coefficient sex", sim_data.beta_sex[0])
+print("per-category observation pcts hardcoded:  0.4, 0.6")
+ozs_fit_summary.loc[['beta_sex']]
+```
+
+```{python}
+hard_fit_summary.loc[['beta_sex_raw', 'beta_sex[1]', 'beta_sex[2]']]
+```
+
+```{python}
+soft_fit_summary.loc[['beta_sex']]
+```
+
+**Age**
+
+```{python}
+print("true coeffecients age", sim_data.beta_age[0])
+print("per-category observation pcts", sim_data.pct_age[0])
+ozs_age_summary = ozs_fit_summary.filter(regex=r"\.*_age", axis=0)
+ozs_age_summary
+```
+
+```{python}
+hard_age_summary
+```
+
+```{python}
+soft_age_summary
+```
+
+**Eth**
+
+```{python}
+print("true coeffecients eth", sim_data.beta_eth[0])
+print("per-category observation pcts", sim_data.pct_eth[0])
+ozs_eth_summary = ozs_fit_summary.filter(regex=r"\.*_eth", axis=0)
+ozs_eth_summary
+```
+
+```{python}
+hard_eth_summary
+```
+
+```{python}
+soft_eth_summary
+```
+
+**Edu**
+
+```{python}
+print("true coeffecients edu", sim_data.beta_edu[0])
+print("per-category observation pcts", sim_data.pct_edu[0])
+ozs_edu_summary = ozs_fit_summary.filter(regex=r"\.*_edu", axis=0)
+ozs_edu_summary
+```
+
+```{python}
+hard_edu_summary
+```
+
+```{python}
+soft_edu_summary
+```
+
+### Visualize the fit
+
+Plot the observed data values against the predicted data values for a random sample of the replicates.
+
+```{python}
+obs_vs_rep_ozs_df = pd.DataFrame(data={'sim_data pos_tests': sim_data.pos_tests[0].astype(int)});
+for x in range(0,100):
+    draw = randint(0, 80);
+    obs_vs_rep_ozs_df['iter ' + str(draw)] =  y_rep_ozs[draw]
+# obs_vs_rep_ozs_df
+
+obs_vs_rep_ozs_long = pd.melt(obs_vs_rep_ozs_df, id_vars=['sim_data pos_tests'], var_name='variable', value_name='value')
+
+ozs_ppc = (p9.ggplot(obs_vs_rep_ozs_long, p9.aes(x='sim_data pos_tests', y='value')) +
+    p9.geom_jitter(alpha=0.3, color='darkblue') +
+    p9.geom_abline(color='orange') +
+    p9.labs(x='pos_tests (simulated)', y='Posterior estiimates', title='Sum-to-zero vector\nPosterior Predictive Check') +
+    p9.theme(figure_size=(10,10))
+    )
+ozs_ppc
+```
+
+Plot the distribution of the actual data against the predicted data values for a random sample of replicates.
+
+```{python}
+# plot the distribution of the actual data against a random sample of replicates.
+yrep_ozs_pd = binomial_ozs_fit.draws_pd(vars='y_rep')
+
+ppc_plot_ozs = ppc_density_plot(sim_df, yrep_ozs_pd, 160, 'PPC sum_to_zero_vector', 'sim data dark blue, y_rep sample light blue')
+ppc_plot_ozs
+```
+
+## Spatial models with sum-to-zero constrained parameters
+
+Spatial auto-correlation is the tendency for adjacent areas to share similar characteristics.
+Conditional Auto-Regressive (CAR) and Intrinsic Conditional Auto-Regressive (ICAR) models,
+first introduced by Besag (1974), account for this by pooling information from neighboring regions.
+Specification of the global, or joint distribution via the local specification
+of the conditional distributions of the individual random variables
+defines a Gaussian Markov random field (GMRF) centered at $0$.
+
+In this section we use a dataset of traffic accidents in New York City that
+have been aggregated to the US Census tract level.
+We use the US Census geodata map to determine the spatial structure of the data, then we fit a series of models,
+starting from a baseline Poisson regression without any spatial component, then adding an ICAR component,
+then the BYM2 model.   Finally, we consider the BYM2 model for maps with disconnected components and islands,
+which is necessary given that New York City is comprised of several distinct land masses and a few islands.
+
+#### The Intrinsic Conditional Auto-Regressive (ICAR) Model
+
+The ICAR model is widely used because the CAR model, like GPs, require computing matrix inverses.
+In constrast, the ICAR model can handle maps containing thousands and tens of thousands of areal regions.
+
+* Conditional specification: multivariate normal random vector $\mathbf{\phi}$
+where each ${\phi}_i$ is conditional on the values of its neighbors
+
+#### Joint specification of the ICAR variate $\phi$
+
+* The joint specification of the ICAR rewrites to _Pairwise Difference_, centered at 0, assuming common variance for all elements of $\phi$.
+$$ p(\phi) \propto \exp \left\{ {- \frac{1}{2}} \sum_{i \sim j}{({\phi}_i - {\phi}_j)}^2 \right\} $$
+
+* Each ${({\phi}_i - {\phi}_j)}^2$ contributes a
+penalty term based on the distance between the values of neighboring regions.
+We use Stan's vectorized operations to compute log probability density:
+```stan
+   target += -0.5 * dot_self(phi[node1] - phi[node2]);
+```
+
+* $\phi$ is non-identifiable, constant added to $\phi$ washes out of ${\phi}_i - {\phi}_j$
+  + sum-to-zero constraint centers $\phi$
+
+
+#### The BYM and BYM2 model
+
+The ICAR model is computationally tractible, but fails to properly account for all regional variance.
+The Besag York Mollié (BYM) model was developed to address this problem.
+The BYM model uses both spatial ($\phi$) and non-spatial ($\theta$) error terms
+to account for over-dispersion not modelled by the regression coefficients.
+When the observed variance isn't fully explained by the spatial structure of the data,
+an ordinary random effects component will account for the rest.
+However, this model becomes difficult to fit
+because either component can account for most or all of the individual-level variance.
+Without any hyperpriors on $\phi$ and $\theta$ the sampler will be forced to explore
+many extreme posterior probability distributions; the sampler will go very slowly or
+fail to fit the data altogether.
+
+The BYM2 model (Riebler et al, 2016) follows
+the _Penalized Complexity_ framework (Simpson et al, 2017)
+which favors models where the parameters have clear interpretations,
+allowing for assignment of sensible hyperparameters to each.
+Like the BYM model, the BYM2 model includes both spatial and non-spatial error terms
+and like the alternative model of Leroux, Lei, and Breslow (Leroux et al, 2000)
+it places a single precision (scale) parameter $\sigma$ on the combined components
+and a mixing parameter $\rho$ for the amount of spatial/non-spatial variation.
+
+$$\left( (\sqrt{\, {\rho} / s}\, \ )\,\phi^* + (\sqrt{1-\rho})\,\theta^* \right) \sigma $$
+
+In order for $\sigma$ to legitimately be the standard deviation of the combined components,
+it is critical that for each $i$, $\operatorname{Var}(\phi_i) \approx \operatorname{Var}(\theta_i) \approx 1$.
+This is done by adding a scaling factor $s$ to the model which scales 
+the proportion of variance $\rho$.
+Because the scaling factor $s$ depends on the dataset, it comes into the model as data.
+
+#### Graph Connectivity and Modeling Consequences
+
+Neighbor graphs are used to model spatial relationships between areal regions
+(such as states, districts, or census tracts). Nodes in the graph correspond to regions
+and edges connect nodes whose corresponding regions share a common point or boundary line.
+Edges have no direction, i.e., an edge between $i$ and $j$ implies
+that $i$ is a neighbor of $j$ and $j$ is a neighbor of $i$.
+
+*Components* represent groups of regions that are connected, either by a direct edge or a series of edges.
+The size of a component is the number of nodes in it.
+An island, or singleton, is a component of size 1, so we must distinguish between *connected components*
+of size 2 or greater and *singletons*.
+
+If it is possible to find a path (series of edges) which connects any region in the graph to any
+other region, then the graph is *fully connected*, i.e., it consists of a single
+component.  For example, at the state level, the neighbor graph of the 48 continental states of the
+U.S. is fully connected, but the graph of all 50 U.S. states and territories is *disconnected*;
+it consists of a connected component and several islands.
+
+The ICAR model requires that the neighbor graph is fully connected for two reasons:
+
+* The joint distribution is computed from the pairwise differences between a node and its neighbors;
+singleton nodes have no neighbors and are therefore undefined.
+
+* Even if the graph doesn't have any singleton nodes, when the graph has multiple connected components
+a sum-to-zero constraint on the entire vector fails to properly identify the model.
+
+#### Encoding the spatial structure of the data
+
+An undirected neighbor graph can be encoded either as a matrix of as a list of edgepairs.
+
+* $N \times N$ Adjacency matrix - entries $(i,\ j)$ and $(j,\ i)$ are 1 when regions $n_i$ and $n_j$ are neighbors, 0 otherwise
+
+* Edgepairs: regions are given a sequential id number.
+The graph is encoded as a 2 row matrix, where each column is a pair of neighbor ids $({n_i}, {n_j})$
+
+```stan
+  int<lower = 0> N;  // number of areal regions
+  // spatial structure
+  int<lower = 0> N_edges;  // number of neighbor pairs
+  array[2, N_edges] int<lower = 1, upper = N> neighbors;  // node[1, j] adjacent to node[2, j]
+```
+
+* Nodes are indexed from 1:N.
+* Edges indices are stored in a 2 x N array
+  + each column is an edge
+  + row 1: index of first node in edge pair, $n_i$
+  + row 2: index of second node in edge pair, $n_j$
+
+#### From GIS shapefiles to neighbor graphs
+
+Areal data consists of a finite set of regions with well-defined boundaries.
+Geographic information systems (GIS) encode areal boundaries as a set of bounding polygons.
+To represent other features, e.g. area name and demographic together with GIS data
+we use packages which extend tabular dataframes to GIS data
+
+- Python: [`GeoPandas`](https://geopandas.org/en/stable/index.html) - add support for geographic data to pandas objects. 
+- R: [`sf`](https://r-spatial.github.io/sf/) Simple Features for R - "spatial analysis simplified"
+
+By defining a neighbor relationship between area regions, we take the information from a GIS dataframe
+and convert it to a graph, where the areas are the nodes and edges denote the neighbor relationship.
+To compute neighbor graphs we use the following packages
+
+- Python: [`libpysal`](https://pysal.org/libpysal/) the Python Spatial Analysis Library Core
+- R: [`spdep`](https://r-spatial.r-universe.dev/spdep) Spatial Dependence: Weighting Schemes, Statistics
+
+There are many ways to define contiguity, of these two straightforward metrics
+are *Rook* and *Queen* - regions which share bounding line are neighbors,
+and regions which share a bounding line or vertex are neighbors, respectively.
+
+
+### Example dataset:  New York City traffic accidents
+
+The dataset we're using is that used in the analysis published in 2019
+[Bayesian Hierarchical Spatial Models: Implementing the Besag York Mollié Model in Stan](https://www.sciencedirect.com/science/article/pii/S1877584518301175).
+
+The data consists of motor vehicle collisions in New York City,
+as recorded by the NYC Department of Transportation, between the years 2005-2014,
+restricted to collisions involving school age children 5-18 years of age as pedestrians.
+Each crash was localized to the US Census tract in which it occurred, using boundaries from the 2010 United States Census,
+using the [2010 Census block map for New York City](https://data.cityofnewyork.us/City-Government/2010-Census-Blocks/v2h8-6mxf).  File `data/nyc_study.geojson` contains the study data and census tract ids and geometry.
+
+```{python}
+nyc_geodata = gpd.read_file(os.path.join('data', 'nyc_study.geojson'))
+nyc_geodata.columns
+nyc_geodata[['BoroName', 'NTAName', 'count', 'kid_pop']].head(4)
+```
+
+The shapefiles from the Census Bureau connect Manhattan to Brooklyn and Queens, but for this analysis, Manhattan is quite separate from Brooklyn and Queens.  Getting the data assembled in the order required for our analysis requires data munging, encapsulated in the Python functions in file `utils_nyc_map.py`.
+The function `nyc_sort_by_comp_size` removes any neighbor pairs between tracts in Manhattan and any tracts in Brooklyn or Queens and updates the neighbor graph accordingly.  It returns a clean neighbor graph and the corresponding geodataframe, plus a list of the component sizes.   The list is sorted so that the largest component (Brooklyn and Queens) is first, and singleton nodes are last.
+
+```{python}
+(nyc_nbs, nyc_gdf, nyc_comp_sizes) = nyc_sort_by_comp_size(nyc_geodata)
+nyc_comp_sizes
+```
+
+To check our work we examine both the geodataframe and the map.
+
+```{python}
+nyc_gdf[['BoroName', 'NTAName', 'count', 'kid_pop']].head(4)
+```
+
+```{python}
+nyc_gdf[['BoroName', 'NTAName', 'count', 'kid_pop']].tail(4)
+```
+
+```{python}
+from splot.libpysal import plot_spatial_weights 
+plot_spatial_weights(nyc_nbs, nyc_gdf)
+```
+
+As both the ICAR and BYM2 model require a fully connected neighbor graph,
+we restrict our attention to the largest graph component, which is comprised
+of Brooklyn and Queens (excepting the Rockaways).
+
+
+```{python}
+from libpysal.weights import Queen
+brklyn_qns_gdf = nyc_gdf[nyc_gdf['comp_id']==0].reset_index(drop=True)
+brklyn_qns_nbs = Queen.from_dataframe(brklyn_qns_gdf , geom_col='geometry')
+plot_spatial_weights(brklyn_qns_nbs, brklyn_qns_gdf ) 
+
+print(f'number of components: {brklyn_qns_nbs.n_components}')
+print(f'islands? {brklyn_qns_nbs.islands}')
+print(f'max number of neighbors per node: {brklyn_qns_nbs.max_neighbors}')
+print(f'mean number of neighbors per node: {brklyn_qns_nbs.mean_neighbors}')
+```
+
+### Model one:  the ICAR model
+
+* Besag, 1973, 1974:  Conditional Auto-Regressive Model (CAR), and
+**Intrinsic Conditional Auto-Regressive** (ICAR) model
+
+* Conditional specification: multivariate normal random vector $\mathbf{\phi}$
+where each ${\phi}_i$ is conditional on the values of its neighbors
+
+* Joint specification rewrites to _Pairwise Difference_,
+$$ p(\phi) \propto \exp \left\{ {- \frac{1}{2}} \sum_{i \sim j}{({\phi}_i - {\phi}_j)}^2 \right\} $$
+
+* Each ${({\phi}_i - {\phi}_j)}^2$ contributes a
+penalty term based on the distance between the values of neighboring regions
+
+* $\phi$ is non-identifiable, constant added to $\phi$ washes out of ${\phi}_i - {\phi}_j$
+    + A sum-to-zero constraint identifies and centers $\phi$
+
+We consider the three possible Stan implmentations of this constraint.
+
+The New York City datasets consists of 
+counts of events per census tract, child population per census tract,
+and a set of collected per-tract features.
+
+The baseline model used to estimate the rate of events per tract is a Poisson regression.
+
+```stan
+  y ~ poisson_log(log_E + beta0 + xs * betas);
+```
+
+This model is inadequate for the usual reasons:
+the Poisson regression fails to account for the overdispersion present in the data.
+Adding an ICAR component helps to account for this.
+
+#### Stan models
+
+The `stan` folder contains implementations `poisson_icar_
+
+The models differ only in their implementation of the sum-to-zero constraint.
+Below is the implementation which uses the `sum_to_zero_vector`.
+
+```{python}
+icar_model_file = os.path.join('stan', 'poisson_icar_ozs.stan')
+
+with open(icar_model_file, 'r') as file:
+    contents = file.read()
+    print(contents)
+
+```
+
+#### Data assembly
+
+```{python}
+brklyn_qns_nbs_adj = nbs_to_adjlist(brklyn_qns_nbs)
+brklyn_qns_nbs_adj
+
+design_vars = np.array(['pct_pubtransit','med_hh_inc', 'traffic', 'frag_index'])
+
+design_mat = brklyn_qns_gdf[design_vars].to_numpy()
+design_mat[:, 1] = np.log(design_mat[:, 1])
+design_mat[:, 2] = np.log(design_mat[:, 2])
+
+pd.DataFrame(data=design_mat).describe()
+
+nyc_data = {"N":brklyn_qns_gdf.shape[0],
+            "y":brklyn_qns_gdf['count'].astype('int'),
+            "E":brklyn_qns_gdf['kid_pop'].astype('int'),
+            "K":4,
+            "xs":design_mat,
+            "N_edges": brklyn_qns_nbs_adj.shape[1],
+            "neighbors": brklyn_qns_nbs_adj
+}
+
+
+#### Model fitting
+
+```{python}
+icar_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_ozs.stan'))
+icar_ozs_fit = icar_ozs_mod.sample(data=nyc_data, output_dir=os.path.join('mcmc_monitor', 'icar_ozs'))
+```
+
+```{python}
+icar_soft_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_soft.stan'))
+icar_soft_fit = icar_soft_mod.sample(data=nyc_data, output_dir=os.path.join('mcmc_monitor', 'icar_soft'))
+```
+
+```{python}
+icar_hard_mod = CmdStanModel(stan_file=os.path.join('stan', 'poisson_icar_hard.stan'))
+icar_hard_fit = icar_hard_mod.sample(data=nyc_data, output_dir=os.path.join('mcmc_monitor', 'icar_hard'))
+```
+
+#### Model Comparison
+
+Get summaries and compare fits.
+
+```{python}
+icar_ozs_summary = icar_ozs_fit.summary()
+icar_soft_summary = icar_soft_fit.summary()
+icar_hard_summary = icar_hard_fit.summary()
+```
+
+```{python}
+print("sum_to_zero_vector phi")
+icar_ozs_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+```
+
+```{python}
+print("soft sum to zero constrain phi")
+icar_soft_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+```
+
+```{python}
+print("hard sum to zero constrain phi")
+icar_hard_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+```
+
+Of these models, `icar_ozs` which uses the built-in `sum_to_zero_vec` runs the fasted and has the highest effective sample size.   The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size.  The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations but has slightly better effective sample size than the soft sum-to-zero sample.  All models fit and produce the same estimates for the group-level parameters.
+
+
+
+
+### Model Two: The BYM2 Model, Riebler et al, 2016
+
+The ICAR model assumes complete spatial correlation between regions.
+This simplifying assumption makes it cheap to compute;  the CAR model,
+which adds a weight to each neighbor pair to account for the strength of
+the spatial correlation, requires computing the inverse of the
+adjacency matrix, an cubic operation.  For maps with more than a handful of regions,
+this is prohibitively expensive, computationally.   The Besag York Mollié (BYM)
+model was developed to address this problem; the BYM2 model builds on this model
+and subsequent refinements.
+
+* Poisson regression + component for extra variation which
+combines spatial and non-spatial components $\phi + \theta$ as
+$$\left( (\sqrt{\, {\rho} / s}\, \ )\,\phi^* + (\sqrt{1-\rho})\,\theta^* \right) \sigma $$
+where:
+  + $\sigma\geq 0$ is the overall standard deviation.
+  + $\rho \in [0,1]$ - proportion of spatial variance.
+  + $\phi^*$ is the ICAR component.
+  + $\theta^* \sim N(0, 1)$ is the vector of ordinary random effects
+  + $s$ is a scaling factor s.t. $\operatorname{Var}(\phi_i) \approx 1$; $s$ is data.
+
+* Follows previous BYM modifications, notably Leroux 2000,
+which has a single scale parameter plus mixing parameter.
+
+* Adds a scaling factor on the ICAR component so that for each element $i$ in vectors $\theta$ and $\phi$,
+$\operatorname{Var}(\theta_i) \approx \operatorname{Var}(\phi_i) \approx 1$.  The scaling factor is derived from the adjacency matrix (neighbors graph).
+The prior on `phi` is the ICAR component, the spatial covariance matrix.
+Riebler et. al. recommend scaling it by the geometric mean of
+the variance of the spatial adjacency matrix.
+
+
+#### Data assembly
+
+The inputs to the BYM2 model are the same as for the ICAR model, with the addition of
+the scaling factor, which comes in as data.
+We have written a helper function called `get_scaling_factor`, in file `utils_bym2.py`
+which takes as its argument the neighbor graph and computes the geometric mean of the
+corresponding adjacency matrix.
+
+
+********* stopped here *************
+
+
+
+
+
+
+
+
+
+
+################################################################################
+
+
+### The BYM2 model
+
+```{python}
+bym2_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_ozs.stan'))
+bym2_ozs_fit = bym2_ozs_mod.sample(data=nyc_data, output_dir=os.path.join('mcmc_monitor', 'bym2_ozs'))
+```
+
+```{python}
+bym2_soft_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_soft.stan'))
+bym2_soft_fit = bym2_soft_mod.sample(data=nyc_data, output_dir=os.path.join('mcmc_monitor', 'bym2_soft'))
+```
+
+```{python}
+bym2_hard_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_hard.stan'))
+bym2_hard_fit = bym2_hard_mod.sample(data=nyc_data, output_dir=os.path.join('mcmc_monitor', 'bym2_hard'))
+```
+
+```{python}
+bym2_ozs_summary = bym2_ozs_fit.summary()
+bym2_soft_summary = bym2_soft_fit.summary()
+bym2_hard_summary = bym2_hard_fit.summary()
+```
+
+```{python}
+print("sum_to_zero_vector phi")
+bym2_ozs_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+```{python}
+print("soft sum to zero constrain phi")
+bym2_soft_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+```{python}
+print("hard sum to zero constrain phi")
+bym2_hard_summary.round(2).loc[
+  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+```
+
+Of these models, the bym2_ozs which uses the built-in sum_to_zero_vec runs the fasted and has the highest effective sample size. The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size. The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations. All models fit and produce the same estimates for the group-level parameters.
+
+

@@ -12,8 +12,8 @@ data {
 transformed data {
   vector[N] log_E = log(E);
   // center continuous predictors 
-  vector[K] means_xs;  // column means of xs before centering
-  matrix[N, K] xs_centered;  // centered version of xs
+  vector[K] means_xs;
+  matrix[N, K] xs_centered;
   for (k in 1:K) {
     means_xs[k] = mean(xs[, k]);
     xs_centered[, k] = xs[, k] - means_xs[k];
@@ -22,7 +22,7 @@ transformed data {
 parameters {
   real beta0; // intercept
   vector[K] betas; // covariates
-  vector[N] phi; // spatial random effects
+  vector[N] phi; // spatial effects
   real<lower=0> sigma; // overall spatial variance
 }
 model {
@@ -30,24 +30,22 @@ model {
   beta0 ~ std_normal();
   betas ~ std_normal();
   sigma ~ std_normal();
-  target += (-0.5 * dot_self(phi[neighbors[1]] - phi[neighbors[2]])
-	     + normal_lupdf(sum(phi) | 0, 0.001 * rows(phi)));
+  target += (-0.5 * dot_self(phi[neighbors[1]] - phi[neighbors[2]])  // ICAR prior
+	     + normal_lupdf(sum(phi) | 0, 0.001 * rows(phi)));       // soft sum-to-zero
 }
 generated quantities {
   real beta_intercept = beta0 - dot_product(means_xs, betas);  // adjust intercept
   array[N] int y_rep;
   {
     vector[N] eta = log_E + beta0 + xs_centered * betas + phi * sigma;
-    if (max(eta) > 26) {
-      // avoid overflow in poisson_log_rng
-      print("max eta too big: ", max(eta));
-      for (n in 1:N) {
-        y_rep[n] = -1;
-      }
-    } else {
-      for (n in 1:N) {
-        y_rep[n] = poisson_log_rng(eta[n]);
-      }
-    }
+    y_rep = max(eta) < 26 ? poisson_log_rng(eta) : rep_array(-1, N);
   }
 }
+
+
+
+
+
+
+
+

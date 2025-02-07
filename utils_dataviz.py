@@ -3,26 +3,6 @@ import numpy as np
 import pandas as pd
 import plotnine as p9
 
-# setup plotnine look and feel
-# p9.theme_set(
-#   p9.theme_grey() + 
-#   p9.theme(text=p9.element_text(size=10),
-#         plot_title=p9.element_text(size=14),
-#         axis_title_x=p9.element_text(size=12),
-#         axis_title_y=p9.element_text(size=12),
-#         axis_text_x=p9.element_text(size=8),
-#         axis_text_y=p9.element_text(size=8)
-#        )
-# )
-# xlabels_90 = p9.theme(axis_text_x = p9.element_text(angle=90, hjust=1))
-
-# map_theme =  p9.theme(figure_size=(7,6),
-#                  axis_text_x=p9.element_blank(),
-#                  axis_ticks_x=p9.element_blank(),
-#                  axis_text_y=p9.element_blank(),
-#                  axis_ticks_y=p9.element_blank())
-
-
 def upper_corr_matrix_to_df(draws: np.ndarray) -> pd.DataFrame:
     """
     Compute correlation for a parameter vector.
@@ -49,11 +29,12 @@ def upper_corr_matrix_to_df(draws: np.ndarray) -> pd.DataFrame:
     melted = melted.dropna()
     return melted
 
-def plot_icar_corr_matrix(plot_df: pd.DataFrame, title: str, size: tuple[int, int]) -> p9.ggplot:
+def plot_icar_corr_matrix(draws: np.ndarray, title: str, size: tuple[int, int]) -> p9.ggplot:
+    corr_df = upper_corr_matrix_to_df(draws)
     p = (
-        p9.ggplot(plot_df, p9.aes(x='Var1', y='Var2', fill='Correlation'))
+        p9.ggplot(corr_df, p9.aes(x='Var1', y='Var2', fill='Correlation'))
         + p9.geom_tile()
-        + p9.scale_fill_gradient2(low='blue', mid='white', high='red', midpoint=0)
+        + p9.scale_fill_gradient2(low='darkblue', mid='white', high='darkorange', midpoint=0)
         + p9.theme_minimal()
         + p9.theme(
             figure_size=size,
@@ -65,7 +46,7 @@ def plot_icar_corr_matrix(plot_df: pd.DataFrame, title: str, size: tuple[int, in
     return p
 
 
-def plot_post_pred_check(
+def ppc_y_yrep_overlay(
         y_rep: np.ndarray,
         y: pd.Series,
         title: str) -> p9.ggplot:
@@ -97,20 +78,6 @@ def plot_post_pred_check(
         )
     return(p)
 
-def ppc_density_plot(sim_data: pd.DataFrame, y_rep_pd: pd.DataFrame, sample_size: int, title: str, x_label: str) -> p9.ggplot:
-    y_rep_sample = y_rep_pd.sample(sample_size).reset_index(drop=True).T
-    ppc_dens_plot = p9.ggplot()
-    for i in range(sample_size):
-        ppc_dens_plot = (ppc_dens_plot
-                             + p9.stat_density(mapping=p9.aes(x=y_rep_sample[i]), geom='line', color='lightblue', alpha=0.2))
-    ppc_dens_plot = (ppc_dens_plot 
-                         + p9.stat_density(mapping=p9.aes(x=sim_data['pos_tests']), geom='line', color='darkblue', size=1.1)
-                         + p9.ggtitle(title)
-                         + p9.xlab(x_label) + p9.ylab("density")
-                         + p9.theme(figure_size=(10,5))
-         )
-    return ppc_dens_plot
-
 def ppc_central_interval(y_rep: np.ndarray, y: pd.Series) -> str:
     # Compute the 25th and 75th percentiles per observation
     q25 = np.percentile(y_rep, 25, axis=0)
@@ -123,3 +90,45 @@ def ppc_central_interval(y_rep: np.ndarray, y: pd.Series) -> str:
         f"y total: {y_rep.shape[1]}, "
         f"ct y is within y_rep central 50% interval: {within_50}, "
         f"pct: {100 * within_50 / y_rep.shape[1]}"))
+
+
+def plot_heatmap(nyc_gdf, data, title, subtitle, scale_name):
+    """
+    Creates a spatial heatmap
+    :param nyc_gdf: GeoDataFrame containing spatial regions
+    :param data: Array of values to plot (must match nyc_gdf row order)
+    :param title: Plot title
+    :param subtitle: Plot subtitle
+    :param scale_name: Label for the color scale
+    :return: plotnine object
+    """
+    nyc_gdf = nyc_gdf.copy()
+    nyc_gdf["plot_values"] = data
+    p = (p9.ggplot(nyc_gdf) +
+         p9.geom_map(p9.aes(fill='plot_values')) +
+         p9.scale_fill_gradient2(low="blue", mid="white", high="orange", midpoint=0, name=scale_name) +
+         p9.labs(title=title, subtitle=subtitle) +
+         p9.theme_minimal() +
+         p9.theme(figure_size=(20,20),
+                  plot_title=p9.element_text(size=32),
+                  plot_subtitle=p9.element_text(size=24),
+                  legend_position='left',
+                  legend_title=p9.element_text(size=20),
+                  legend_text=p9.element_text(size=16),
+                  legend_key_size=24)
+         )
+    return p
+
+def ppc_dens_overlay(sim_data: pd.Series, y_rep: np.ndarray, sample_size: int, title: str, x_label: str) -> p9.ggplot:
+    y_rep_sample = pd.DataFrame(y_rep).sample(n=sample_size).reset_index(drop=True).T
+    ppc_dens_plot = p9.ggplot()
+    for i in range(sample_size):
+        ppc_dens_plot = (ppc_dens_plot
+                             + p9.stat_density(mapping=p9.aes(x=y_rep_sample[i]), geom='line', color='lightblue', alpha=0.2))
+    ppc_dens_plot = (ppc_dens_plot 
+                         + p9.stat_density(mapping=p9.aes(x=sim_data), geom='line', color='darkblue', size=1.1)
+                         + p9.ggtitle(title)
+                         + p9.xlab(x_label) + p9.ylab("density")
+                         + p9.theme(figure_size=(10,5))
+         )
+    return ppc_dens_plot

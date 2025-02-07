@@ -50,14 +50,6 @@ from utils_nyc_map import nyc_sort_by_comp_size
 from utils_dataviz import *
 ```
 
-**R**
-```r
-library(sf)
-library(dplyr)
-library(spdep)
-source("utils_nyc_map.R")
-```
-
 ## Assemble data
 
 Data block of the Stan BYM2 model for disconnected components and islands:

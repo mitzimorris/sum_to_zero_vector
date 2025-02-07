@@ -8,12 +8,14 @@ data {
   // spatial structure
   int<lower = 0> N_edges;  // number of neighbor pairs
   array[2, N_edges] int<lower = 1, upper = N> neighbors;  // columnwise adjacent
+
+  real tau; // scaling factor
 }
 transformed data {
   vector[N] log_E = log(E);
   // center continuous predictors 
-  vector[K] means_xs;
-  matrix[N, K] xs_centered;
+  vector[K] means_xs;  // column means of xs before centering
+  matrix[N, K] xs_centered;  // centered version of xs
   for (k in 1:K) {
     means_xs[k] = mean(xs[, k]);
     xs_centered[, k] = xs[, k] - means_xs[k];
@@ -22,46 +24,28 @@ transformed data {
 parameters {
   real beta0; // intercept
   vector[K] betas; // covariates
-  vector[N-1] phi_raw; // spatial random effects
-  real<lower=0> sigma; // overall spatial variance
+  real<lower=0, upper=1> rho; // proportion of spatial variance
+  sum_to_zero_vector[N] phi;  // spatial effects
+  vector[N] theta; // heterogeneous random effects
+  real<lower = 0> sigma;  // scale of combined effects
 }
 transformed parameters {
-  vector[N] phi = append_row(phi_raw, -sum(phi_raw)); // hard sum-to-zero
+  vector[N] gamma = sqrt(1 - rho) * theta + sqrt(rho * inv(tau)) * phi;  // BYM2
 }
 model {
-  y ~ poisson_log(log_E + beta0 + xs_centered * betas + phi * sigma);
+  y ~ poisson_log(log_E + beta0 + xs_centered * betas + gamma * sigma);
+  rho ~ beta(0.5, 0.5);
+  target += -0.5 * dot_self(phi[neighbors[1]] - phi[neighbors[2]]); // ICAR prior
   beta0 ~ std_normal();
   betas ~ std_normal();
+  theta ~ std_normal();
   sigma ~ std_normal();
-  target += -0.5 * dot_self(phi[neighbors[1]] - phi[neighbors[2]]);  // ICAR prior
 }
 generated quantities {
   real beta_intercept = beta0 - dot_product(means_xs, betas);  // adjust intercept
   array[N] int y_rep;
   {
-    vector[N] eta = log_E + beta0 + xs_centered * betas + phi * sigma;
+    vector[N] eta = log_E + beta0 + xs_centered * betas + gamma * sigma;
     y_rep = max(eta) < 26 ? poisson_log_rng(eta) : rep_array(-1, N);
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
