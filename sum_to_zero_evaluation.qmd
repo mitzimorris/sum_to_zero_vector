@@ -203,10 +203,10 @@ gen_data_large['N'] = 960000
 
 ```{python}
 sim_data = gen_mod.sample(data=gen_data,
-                          iter_warmup=1, iter_sampling=1, chains=1)
+                          iter_warmup=1, iter_sampling=1, chains=1, seed=45678)
 
 sim_data_large = gen_mod.sample(data=gen_data_large,
-                          iter_warmup=1, iter_sampling=1, chains=1)
+                          iter_warmup=1, iter_sampling=1, chains=1, seed=45678)
 ```
 
 * Examine the set of generated data-generating params and resulting dataset.
@@ -385,8 +385,11 @@ On Apple M3 hardware, all three models quickly fit the large dataset.
 Run CmdStan's `diagnose` method to check model fits.
 
 ```{python}
+print("sum_to_zero_vector\n")
 print(binomial_ozs_fit.diagnose())
+print("\n\nhard sum-to-zero\n")
 print(binomial_hard_fit.diagnose())
+print("\n\nsoft sum-to-zero\n")
 print(binomial_soft_fit.diagnose())
 ```
 
@@ -525,26 +528,6 @@ soft_edu_summary
 ```
 
 ### Visualize the fit
-
-Plot the observed data values against the predicted data values for a random sample of the replicates.
-
-```{python}
-obs_vs_rep_ozs_df = pd.DataFrame(data={'sim_data pos_tests': sim_data.pos_tests[0].astype(int)});
-for x in range(0,100):
-    draw = randint(0, 80);
-    obs_vs_rep_ozs_df['iter ' + str(draw)] =  y_rep_ozs[draw]
-# obs_vs_rep_ozs_df
-
-obs_vs_rep_ozs_long = pd.melt(obs_vs_rep_ozs_df, id_vars=['sim_data pos_tests'], var_name='variable', value_name='value')
-
-ozs_ppc = (p9.ggplot(obs_vs_rep_ozs_long, p9.aes(x='sim_data pos_tests', y='value')) +
-    p9.geom_jitter(alpha=0.3, color='darkblue') +
-    p9.geom_abline(color='orange') +
-    p9.labs(x='pos_tests (simulated)', y='Posterior estimates', title='Sum-to-zero vector\nPosterior Predictive Check') +
-    p9.theme(figure_size=(10,10))
-    )
-ozs_ppc
-```
 
 Plot the distribution of the actual data against the predicted data values for a random sample of replicates.
 In file `utils_dataviz.py` we have implemented the equivalent of the R `bayesplot` package function
@@ -868,25 +851,29 @@ icar_hard_summary = icar_hard_fit.summary()
 ```{python}
 print("sum_to_zero_vector phi")
 icar_ozs_summary.round(2).loc[
-  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+  ['beta_intercept', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
 ```
 
 ```{python}
 print("soft sum to zero constrain phi")
 icar_soft_summary.round(2).loc[
-  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+  ['beta_intercept', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
 ```
 
 ```{python}
 print("hard sum to zero constrain phi")
 icar_hard_summary.round(2).loc[
-  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+  ['beta_intercept', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
 ```
 
 #### Discussion
 
-Of these models, `icar_ozs` which uses the built-in `sum_to_zero_vector` runs the fasted and has the highest effective sample size.   The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size.  The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations but has slightly better effective sample size than the soft sum-to-zero sample.  All models fit and produce the same estimates for the group-level parameters.
-
+Of these models, `icar_ozs` which uses the built-in `sum_to_zero_vector` has the best
+wall clock time and the highest effective sample size.
+The soft sum-to-zero constraint runs almost as quickly, but has a lower effective sample size.
+The hard sum-to-zero constraint runs 2-3 times slower - or more, depending on the initializations,
+but has slightly better effective sample size than the soft sum-to-zero sample.
+All models fit and produce the same estimates for the group-level parameters.
 
 
 
@@ -915,7 +902,8 @@ where:
 which has a single scale parameter plus mixing parameter.
 
 * Adds a scaling factor on the ICAR component so that for each element $i$ in vectors $\theta$ and $\phi$,
-$\operatorname{Var}(\theta_i) \approx \operatorname{Var}(\phi_i) \approx 1$.  The scaling factor is derived from the adjacency matrix (neighbors graph).
+$\operatorname{Var}(\theta_i) \approx \operatorname{Var}(\phi_i) \approx 1$.
+The scaling factor is derived from the adjacency matrix (neighbors graph).
 The prior on `phi` is the ICAR component, the spatial covariance matrix.
 Riebler et. al. recommend scaling it by the geometric mean of
 the variance of the spatial adjacency matrix.
@@ -993,19 +981,19 @@ bym2_hard_summary = bym2_hard_fit.summary()
 ```{python}
 print("sum_to_zero_vector phi")
 bym2_ozs_summary.round(2).loc[
-  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+  ['beta_intercept', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
 ```{python}
 print("soft sum to zero constrain phi")
 bym2_soft_summary.round(2).loc[
-  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+  ['beta_intercept', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
 ```{python}
 print("hard sum to zero constrain phi")
 bym2_hard_summary.round(2).loc[
-  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma']]
+  ['beta_intercept', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
 ## Conclusion: the `sum_to_zero_vector` just works!
@@ -1130,7 +1118,7 @@ design_mat[:, 2] = np.log(design_mat[:, 2])
 
 nyc_nbs_adj = nbs_to_adjlist(nyc_nbs)
 
-component_sizes = [x for x in sizes if x > 1]
+component_sizes = [x for x in nyc_comp_sizes if x > 1]
 N_components = len(component_sizes)
 scaling_factors = np.ones(N_components)
 for i in range(N_components):
@@ -1165,7 +1153,7 @@ bym2_multicomp_mod = CmdStanModel(stan_file=bym2_multicomp_file)
 ```
 
 ```{python}
-bym2_multicomp_fit = bym2_multicomp_mod.sample(data=bym2_data, iter_warmup=3000, iter_sampling=2000)
+bym2_multicomp_fit = bym2_multicomp_mod.sample(data=bym2_multicomp_data, iter_warmup=3000, iter_sampling=2000)
 ```
 
 #### Check fit
@@ -1173,7 +1161,7 @@ bym2_multicomp_fit = bym2_multicomp_mod.sample(data=bym2_data, iter_warmup=3000,
 ```{python}
 bym2_multicomp_summary = bym2_multicomp_fit.summary()
 bym2_multicomp_summary.round(2).loc[
-  ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
+  ['beta_intercept', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
 A full writeup of the BYM2_multicomp model is available in [this notebook](https://github.com/mitzimorris/geomed_2024/blob/main/h6_bym2_multicomp.ipynb).
