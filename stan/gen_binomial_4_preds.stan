@@ -9,7 +9,6 @@ data {
 }
 transformed data {
   int strata = 2 * N_age * N_eth * N_edu;
-
 }
 generated quantities {
   real beta_0 = baseline;
@@ -51,13 +50,7 @@ generated quantities {
   // beta_edu = sort_desc(beta_edu_tmp);
   // }
 
-  // compute aggregation by pcts
-  array[strata] int sex;
-  array[strata] int age;
-  array[strata] int eth;
-  array[strata] int edu;
-  array[strata] int pos_tests;
-  array[strata] int tests;
+  array[strata] int sex, age, eth, edu, pos_tests, tests;
   array[strata] real p;
   array[strata] real p_sample;
 
@@ -66,14 +59,17 @@ generated quantities {
     for (i_age in 1:N_age) {
       for (i_eth in 1:N_eth) {
         for (i_edu in 1:N_edu) {
-          sex[idx] = i_sex;
-          age[idx] = i_age;
-          eth[idx] = i_eth;
-          edu[idx] = i_edu;
+
+	  // corresponds to unmodeled data inputs
+          sex[idx] = i_sex; age[idx] = i_age; eth[idx] = i_eth; edu[idx] = i_edu;
           tests[idx] = to_int(pct_sex[i_sex] * pct_age[i_age] * pct_eth[i_eth] * pct_edu[i_edu] * N);
+
+	  // corresponds to transformed parameters
           p[idx] = inv_logit(beta_0 + beta_sex * (i_sex)
                     + beta_age[i_age] + beta_eth[i_eth] +  beta_edu[i_edu]);
           p_sample[idx] = p[idx] * sens + (1 - p[idx]) * (1 - spec);
+
+	  // corresponds to likelihood
           pos_tests[idx] = binomial_rng(tests[idx], p_sample[idx]);
           idx += 1;
         }

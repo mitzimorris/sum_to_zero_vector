@@ -72,11 +72,12 @@ def ppc_y_yrep_overlay(
         + p9.geom_line(p9.aes(y='y_rep_median'), color='orange', alpha=0.8)
         + p9.geom_ribbon(p9.aes(ymin='y_rep_lower', ymax='y_rep_upper'),
                                 fill='grey', alpha=0.2)
-        + p9.theme(figure_size=(10, 5), axis_text_x=p9.element_blank())
+        + p9.theme(figure_size=(8, 4), axis_text_x=p9.element_blank())
         + p9.ylab('y_rep') + p9.xlab('y')
         + p9.ggtitle(title)
         )
     return(p)
+
 
 def ppc_central_interval(y_rep: np.ndarray, y: pd.Series) -> str:
     # Compute the 25th and 75th percentiles per observation
@@ -89,7 +90,7 @@ def ppc_central_interval(y_rep: np.ndarray, y: pd.Series) -> str:
     return((
         f"y total: {y_rep.shape[1]}, "
         f"ct y is within y_rep central 50% interval: {within_50}, "
-        f"pct: {100 * within_50 / y_rep.shape[1]}"))
+        f"pct: {np.round(100 * within_50 / y_rep.shape[1], decimals=2)}"))
 
 
 def plot_heatmap(nyc_gdf, data, title, subtitle, scale_name):
@@ -119,7 +120,14 @@ def plot_heatmap(nyc_gdf, data, title, subtitle, scale_name):
          )
     return p
 
-def ppc_dens_overlay(sim_data: pd.Series, y_rep: np.ndarray, sample_size: int, title: str, x_label: str) -> p9.ggplot:
+
+def ppc_dens_overlay(
+    sim_data: pd.Series,
+    y_rep: np.ndarray,
+    sample_size: int,
+    title: str,
+    x_label: str
+) -> p9.ggplot:
     y_rep_sample = pd.DataFrame(y_rep).sample(n=sample_size).reset_index(drop=True).T
     ppc_dens_plot = p9.ggplot()
     for i in range(sample_size):
@@ -132,3 +140,31 @@ def ppc_dens_overlay(sim_data: pd.Series, y_rep: np.ndarray, sample_size: int, t
                          + p9.theme(figure_size=(10,5))
          )
     return ppc_dens_plot
+
+
+def marginal_variances_boxplot(
+        names: list[str],
+        df_vars: list[pd.DataFrame]
+        ) -> p9.ggplot:
+    if len(names) != len(df_vars):
+        print(f'Error, mismatch between names list and dataframes list')
+        return None
+
+    df_list = []
+    for model_name, var_array in zip(names, df_vars):
+        df_model = pd.DataFrame({
+            "index": np.arange(1, df_vars[0].shape[0] + 1),
+            "variance": var_array,
+            "model": model_name
+            })
+        df_list.append(df_model)
+        df_variances = pd.concat(df_list, ignore_index=True)
+
+    boxplot = (
+        p9.ggplot(df_variances, p9.aes(x='model', y='variance', fill='model')) +
+        p9.geom_boxplot() +
+        p9.ggtitle("Marginal Variances of beta_age Across Models") +
+        p9.theme_minimal() +
+        p9.labs(x="Model", y="Marginal Variance")
+    )
+    return boxplot

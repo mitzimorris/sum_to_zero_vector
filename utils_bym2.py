@@ -4,11 +4,12 @@ BYM2 model helper functions for computing scaling factors.
 
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 import scipy.sparse as sp
 import scipy.sparse.linalg as splinalg
-from libpysal.weights import W
+from libpysal.weights import Queen, W
 from scipy import stats
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 def nbs_to_adjlist(nbs: W) -> np.ndarray:
     nbs_adj =  nbs.to_adjlist(remove_symmetric=True)
@@ -53,6 +54,7 @@ def q_inv_dense(Q: sp.spmatrix, A: Optional[np.ndarray] = None) -> np.ndarray:
     Q_inv_const = Q_inv - W @ np.linalg.inv(A @ W) @ W.T
     return Q_inv_const
 
+
 def get_scaling_factor(nbs: W) -> np.float64:
     """
     Compute the geometric mean of the variances from the spatial covariance matrix.
@@ -70,3 +72,14 @@ def get_scaling_factor(nbs: W) -> np.float64:
     valid_vars = variances[variances > 0]  # Exclude any zero or negative values
     scaling = np.exp(np.mean(np.log(valid_vars)))
     return scaling
+
+
+def get_scaling_factors(N_components: int, gdf: gpd.GeoDataFrame ) -> List[np.float64]:
+    scaling_factors = np.ones(N_components)
+    for i in range(N_components):
+        comp_gdf = gdf[gdf['comp_id'] == i].reset_index(drop=True)
+        comp_nbs = Queen.from_dataframe(comp_gdf, geom_col='geometry')
+        component_w = W(comp_nbs.neighbors, comp_nbs.weights)
+        scaling_factors[i] = get_scaling_factor(component_w)
+
+    return scaling_factors

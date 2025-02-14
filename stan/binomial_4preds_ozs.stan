@@ -1,6 +1,6 @@
 // multi-level model for binomial data with 4 categorical predictors.
 data {
-  int<lower=1> N; // number of strata
+  int<lower=1> N;  // number of strata
   int<lower=1> N_age;
   int<lower=1> N_eth;
   int<lower=1> N_edu;
@@ -19,6 +19,8 @@ data {
 transformed data {
   real mean_sex = mean(sex);
   vector[N] sex_c = to_vector(sex) - mean_sex;
+  // scaling factors for marginal variances of sum_to_zero_vectors
+  // https://discourse.mc-stan.org/t/zero-sum-vector-and-normal-distribution/38296
   real s_age = sqrt(N_age * inv(N_age - 1));
   real s_eth = sqrt(N_eth * inv(N_eth - 1));
   real s_edu = sqrt(N_edu * inv(N_edu - 1));
@@ -32,9 +34,10 @@ parameters {
   sum_to_zero_vector[N_edu] beta_edu;
 }
 transformed parameters {
-  // non-standard link function
-  vector[N] p =  inv_logit(beta_0 + beta_sex * sex_c + beta_age[age]
-			   + beta_eth[eth] +  beta_edu[edu]);
+  // true prevalence
+  vector[N] p = inv_logit(beta_0 + beta_sex * sex_c + beta_age[age]
+			  + beta_eth[eth] + beta_edu[edu]);
+  // incorporate test sensitivity and specificity.
   vector[N] p_sample = p * sens + (1 - p) * (1 - spec);
 }
 model {
@@ -43,13 +46,15 @@ model {
   // priors
   beta_0 ~ normal(0, 2.5);
   beta_sex ~ std_normal();
-  // centered parameterization
-  beta_age ~ normal(0, s_age * sigma_age);
-  beta_eth ~ normal(0, s_eth * sigma_eth);
-  beta_edu ~ normal(0, s_edu * sigma_edu);
   sigma_eth ~ std_normal();
   sigma_age ~ std_normal();
   sigma_edu ~ std_normal();
+
+  // centered parameterization
+  // scale normal priors on sum_to_zero_vectors
+  beta_age ~ normal(0, s_age * sigma_age);
+  beta_eth ~ normal(0, s_eth * sigma_eth);
+  beta_edu ~ normal(0, s_edu * sigma_edu);
 }
 generated quantities {
   real beta_intercept = beta_0 - mean_sex * beta_sex;

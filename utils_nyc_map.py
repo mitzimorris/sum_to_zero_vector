@@ -46,11 +46,13 @@ def nyc_cleanup(nbs: W, gdf: gpd.GeoDataFrame) -> W:
     return W(nbs.neighbors, nbs.weights)
 
 
-def nyc_sort_by_comp_size(nyc_gdf: gpd.GeoDataFrame) -> tuple[W, gpd.GeoDataFrame, List[int]]:
+def nyc_sort_by_comp_size(nyc_gdf: gpd.GeoDataFrame
+                              ) -> tuple[W, gpd.GeoDataFrame, List[int]]:
     """
     Process NYC geodataframe - sort by component size descending
     - param nyc_gdf : geopandas.GeoDataFrame
-    - return: tuple containing:
+    - return: tuple containing: neighbors, sorted gdf,
+              nodes_per_component, edges_per_component
     """
     # Compute initial neighborhood graph
     nyc_nbs = Queen.from_dataframe(nyc_gdf, geom_col='geometry')
