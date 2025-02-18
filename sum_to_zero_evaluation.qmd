@@ -18,6 +18,7 @@ format:
       sidebar-width: 250px
       body-width: 900px
       margin-width: 300px
+engine: jupyter
 ---
 
 
@@ -75,7 +76,7 @@ def summarize_predictor(df: pd.DataFrame, name: str) -> pd.DataFrame:
     if "[" in name:
         pred_summary = pred_summary.sort_index(key=extract_numeric_index)
     
-    return pred_summary[['Mean', 'StdDev', 'ESS_bulk', 'ESS_tail', 'R_hat']]
+    return pred_summary[['Mean', 'StdDev', 'ESS_bulk', 'ESS/sec', 'R_hat']]
 
 
 # side-by-side tables
@@ -207,6 +208,13 @@ of demographic predictors with any number of categories.
 * The specified test sensitivity and specificity
 
 In order to fit this model, we need to put a sum-to-zero constraint on the categorical variables.
+
+In the following sections we set up a data-generating program and generate two test datasets,
+one large, one small.  Then we run all three implementations of the sum-to-zero constraint
+on these datasets and compare the estimates of the group-level regression parameters.
+This provides a small demonstration of the behavoir of these three implementations under
+different conditions.  A more thorough investigation would include more and different datasets,
+test procedures, and visualizations.
 
 
 ### The Stan model
@@ -546,32 +554,67 @@ On Apple M3 hardware, all three models quickly fit the large dataset.
 
 We check the R-hat and effective sample size (ESS) for all group-level parameters.
 
+In order to do this multiway comparison, we assemble the individual summaries from the 6 runs above
+into two dataframes.  We also compute the number of effective samples per second - a key metric of
+model efficienty.
+(Note:  we're using a development version of CmdStanPy to scrape timing information from the CSV files
+because changes to CmdStan's `stansummary` function removed the ESS/sec metric.
+This is a workaround for now).
+
 ```{python}
 # small dataset
 ozs_fit_summary = binomial_ozs_fit.summary(sig_figs=2)
 ozs_fit_summary.index =  ozs_fit_summary.index.astype(str) + "  a) ozs"
+ozs_fit_timing = binomial_ozs_fit.timing
+ozs_total_time = 0
+for i in range(len(ozs_fit_timing)):
+    ozs_total_time += ozs_fit_timing[i]['total']
+ozs_fit_summary['ESS/sec'] = ozs_fit_summary['ESS_bulk']/ozs_total_time
 
 hard_fit_summary = binomial_hard_fit.summary(sig_figs=2)
 hard_fit_summary.index = hard_fit_summary.index.astype(str) + "  b) hard"
+hard_fit_timing = binomial_hard_fit.timing
+hard_total_time = 0
+for i in range(len(hard_fit_timing)):
+    hard_total_time += hard_fit_timing[i]['total']
+hard_fit_summary['ESS/sec'] = hard_fit_summary['ESS_bulk']/hard_total_time
 
 soft_fit_summary = binomial_soft_fit.summary(sig_figs=2)
 soft_fit_summary.index = soft_fit_summary.index.astype(str) + "  c) soft"
+soft_fit_timing = binomial_soft_fit.timing
+soft_total_time = 0
+for i in range(len(soft_fit_timing)):
+    soft_total_time += soft_fit_timing[i]['total']
+soft_fit_summary['ESS/sec'] = soft_fit_summary['ESS_bulk']/soft_total_time
 
 small_data_fits_summary = pd.concat([ozs_fit_summary, hard_fit_summary, soft_fit_summary])
 
 # large dataset
 ozs_fit_lg_summary = binomial_ozs_fit_lg.summary(sig_figs=2)
 ozs_fit_lg_summary.index =  ozs_fit_lg_summary.index.astype(str) + "  a) ozs"
+ozs_fit_timing_lg = binomial_ozs_fit_lg.timing
+ozs_total_time_lg = 0
+for i in range(len(ozs_fit_timing_lg)):
+    ozs_total_time_lg += ozs_fit_timing_lg[i]['total']
+ozs_fit_lg_summary['ESS/sec'] = ozs_fit_lg_summary['ESS_bulk']/ozs_total_time_lg
 
 hard_fit_lg_summary = binomial_hard_fit_lg.summary(sig_figs=2)
 hard_fit_lg_summary.index = hard_fit_lg_summary.index.astype(str) + "  b) hard"
+hard_fit_timing_lg = binomial_hard_fit_lg.timing
+hard_total_time_lg = 0
+for i in range(len(hard_fit_timing_lg)):
+    hard_total_time_lg += hard_fit_timing_lg[i]['total']
+hard_fit_lg_summary['ESS/sec'] = hard_fit_lg_summary['ESS_bulk']/hard_total_time_lg
 
 soft_fit_lg_summary = binomial_soft_fit_lg.summary(sig_figs=2)
 soft_fit_lg_summary.index = soft_fit_lg_summary.index.astype(str) + "  c) soft"
+soft_fit_timing_lg = binomial_soft_fit_lg.timing
+soft_total_time_lg = 0
+for i in range(len(soft_fit_timing_lg)):
+    soft_total_time_lg += soft_fit_timing_lg[i]['total']
+soft_fit_lg_summary['ESS/sec'] = soft_fit_lg_summary['ESS_bulk']/soft_total_time_lg
 
 large_data_fits_summary = pd.concat([ozs_fit_lg_summary, hard_fit_lg_summary, soft_fit_lg_summary])
-
-summary_cols = ['Mean', 'StdDev', 'ESS_bulk', 'ESS_tail', 'R_hat']
 ```
 
 **Eth**
@@ -712,9 +755,9 @@ The BYM2 model builds on this model and subsequent refinements.
 
 These models are more fully explained in a series of notebooks
 available from GitHub repo:  [https://github.com/mitzimorris/geomed_2024](https://github.com/mitzimorris/geomed_2024), see notebooks:
-* [The ICAR model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/h4_icar.ipynb)
-* [The BYM2 model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/h5_bym2.ipynb)
-* [The BYM2_multicomp model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/h6_bym2_multicomp.ipynb)
+* [The ICAR model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/python-notebooks/h4_icar.ipynb)
+* [The BYM2 model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/python-notebooks/h5_bym2.ipynb)
+* [The BYM2_multicomp model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/python-notebooks/h6_bym2_multicomp.ipynb)
 
 
 ### Example dataset:  New York City traffic accidents
@@ -913,12 +956,29 @@ Get summaries and compare fits.
 
 ```{python}
 brklyn_qns_ozs_summary = brklyn_qns_ozs_fit.summary()
-brklyn_qns_soft_summary = brklyn_qns_soft_fit.summary()
-brklyn_qns_hard_summary = brklyn_qns_hard_fit.summary()
-
 brklyn_qns_ozs_summary.index =  brklyn_qns_ozs_summary.index.astype(str) + "  a) ozs"
+ozs_fit_timing = brklyn_qns_ozs_fit.timing
+ozs_total_time = 0
+for i in range(len(ozs_fit_timing)):
+    ozs_total_time += ozs_fit_timing[i]['total']
+brklyn_qns_ozs_summary['ESS/sec'] = brklyn_qns_ozs_summary['ESS_bulk']/ozs_total_time
+
+
+brklyn_qns_hard_summary = brklyn_qns_hard_fit.summary()
 brklyn_qns_hard_summary.index = brklyn_qns_hard_summary.index.astype(str) + "  b) hard"
+hard_fit_timing = brklyn_qns_hard_fit.timing
+hard_total_time = 0
+for i in range(len(hard_fit_timing)):
+    hard_total_time += hard_fit_timing[i]['total']
+brklyn_qns_hard_summary['ESS/sec'] = brklyn_qns_hard_summary['ESS_bulk']/hard_total_time
+
+brklyn_qns_soft_summary = brklyn_qns_soft_fit.summary()
 brklyn_qns_soft_summary.index = brklyn_qns_soft_summary.index.astype(str) + "  c) soft"
+soft_fit_timing = brklyn_qns_soft_fit.timing
+soft_total_time = 0
+for i in range(len(soft_fit_timing)):
+    soft_total_time += soft_fit_timing[i]['total']
+brklyn_qns_soft_summary['ESS/sec'] = brklyn_qns_soft_summary['ESS_bulk']/soft_total_time
 
 brklyn_qns_fits_summary = pd.concat([brklyn_qns_ozs_summary, brklyn_qns_hard_summary, brklyn_qns_soft_summary])
 ```
@@ -972,7 +1032,9 @@ boxplot
 
 All implementations provide the approximately the same marginal variances.
 
-We can repeat this procedure with the next largest component, the Bronx (excepting City Island).
+We can repeat this procedure with the next largest component, the Bronx (excepting City Island),
+which has 329 regions, roughly 1/3 of the size of Brooklyn-Queens, with 1360 regions.
+
 
 ```{python}
 bronx_gdf = nyc_gdf[nyc_gdf['comp_id']==1].reset_index(drop=True)
@@ -1028,12 +1090,29 @@ bronx_hard_fit = bym2_hard_mod.sample(data=bronx_data, iter_warmup=5000, seed=a_
 
 ```{python}
 bronx_ozs_summary = bronx_ozs_fit.summary()
-bronx_soft_summary = bronx_soft_fit.summary()
-bronx_hard_summary = bronx_hard_fit.summary()
+bronx_ozs_summary.index =  bronx_ozs_summary.index.astype(str) + "  a) ozs"
+ozs_fit_timing = bronx_ozs_fit.timing
+ozs_total_time = 0
+for i in range(len(ozs_fit_timing)):
+    ozs_total_time += ozs_fit_timing[i]['total']
+bronx_ozs_summary['ESS/sec'] = bronx_ozs_summary['ESS_bulk']/ozs_total_time
 
-bronx_ozs_summary.index =  bronx_ozs_summary.index.astype(str) + " 1.ozs"
-bronx_hard_summary.index = bronx_hard_summary.index.astype(str) + " 2.hard"
-bronx_soft_summary.index = bronx_soft_summary.index.astype(str) + " 3.soft"
+
+bronx_hard_summary = bronx_hard_fit.summary()
+bronx_hard_summary.index = bronx_hard_summary.index.astype(str) + "  b) hard"
+hard_fit_timing = bronx_hard_fit.timing
+hard_total_time = 0
+for i in range(len(hard_fit_timing)):
+    hard_total_time += hard_fit_timing[i]['total']
+bronx_hard_summary['ESS/sec'] = bronx_hard_summary['ESS_bulk']/hard_total_time
+
+bronx_soft_summary = bronx_soft_fit.summary()
+bronx_soft_summary.index = bronx_soft_summary.index.astype(str) + "  c) soft"
+soft_fit_timing = bronx_soft_fit.timing
+soft_total_time = 0
+for i in range(len(soft_fit_timing)):
+    soft_total_time += soft_fit_timing[i]['total']
+bronx_soft_summary['ESS/sec'] = bronx_soft_summary['ESS_bulk']/soft_total_time
 
 bronx_fits_summary = pd.concat([bronx_ozs_summary, bronx_hard_summary, bronx_soft_summary])
 ```
@@ -1072,119 +1151,6 @@ boxplot = marginal_variances_boxplot(
 boxplot
 ```
 
-Next we skip to Staten Island.
-
-```{python}
-si_gdf = nyc_gdf[nyc_gdf['comp_id']==3].reset_index(drop=True)
-print(f'number of regions: {si_gdf.shape[0]}')
-si_nbs = Queen.from_dataframe(si_gdf , geom_col='geometry')
-plot_spatial_weights(si_nbs, si_gdf ) 
-
-print(f'number of components: {si_nbs.n_components}')
-print(f'islands? {si_nbs.islands}')
-print(f'max number of neighbors per node: {si_nbs.max_neighbors}')
-print(f'mean number of neighbors per node: {si_nbs.mean_neighbors}')
-```
-
-```{python}
-# Data assembly
-
-# design matrix
-design_vars = np.array(['pct_pubtransit','med_hh_inc', 'traffic', 'frag_index'])
-design_mat = si_gdf[design_vars].to_numpy()
-design_mat[:, 1] = np.log(design_mat[:, 1])
-design_mat[:, 2] = np.log(design_mat[:, 2])
-
-# neighbors array
-si_nbs_adj = nbs_to_adjlist(si_nbs)
-
-# scaling factor
-tau = get_scaling_factor(si_nbs)
-
-si_data = {"N":si_gdf.shape[0],
-              "y":si_gdf['count'].astype('int'),
-              "E":si_gdf['kid_pop'].astype('int'),
-              "K":4,
-              "xs":design_mat,
-              "N_edges": si_nbs_adj.shape[1],
-              "neighbors": si_nbs_adj,
-              "tau": tau
-}
-```
-
-```{python}
-si_ozs_fit = bym2_ozs_mod.sample(data=si_data, iter_warmup=5000)
-```
-
-```{python}
-a_seed = si_ozs_fit.metadata.cmdstan_config['seed']
-```
-
-```{python}
-si_soft_fit = bym2_soft_mod.sample(data=si_data, iter_warmup=5000, seed=a_seed)
-```
-
-```{python}
-si_hard_fit = bym2_hard_mod.sample(data=si_data, iter_warmup=5000, seed=a_seed)
-```
-
-```{python}
-si_ozs_summary = si_ozs_fit.summary()
-si_soft_summary = si_soft_fit.summary()
-si_hard_summary = si_hard_fit.summary()
-
-si_ozs_summary.index =  si_ozs_summary.index.astype(str) + " 1.ozs"
-si_hard_summary.index = si_hard_summary.index.astype(str) + " 2.hard"
-si_soft_summary.index = si_soft_summary.index.astype(str) + " 3.soft"
-
-si_fits_summary = pd.concat([si_ozs_summary, si_hard_summary, si_soft_summary])
-```
-
-```{python}
-beta_summary = summarize_predictor(si_fits_summary, 'beta')
-sigma_summary = summarize_predictor(si_fits_summary, 'sigma')
-rho_summary = summarize_predictor(si_fits_summary, 'rho')
-
-si_summary = pd.concat([beta_summary, sigma_summary, rho_summary])
-
-display(HTML(style_dataframe(si_summary, 3).to_html()))
-```
-
-Compare the fitted values of spatial component `phi`, which has a sum-to-zero constraint.
-
-```{python}
-si_phi_ozs = si_ozs_fit.stan_variable('phi')
-si_phi_soft = si_hard_fit.stan_variable('phi')
-si_phi_hard = si_soft_fit.stan_variable('phi')
-
-print('ozs: marginal mean estimates last elements phi',
-	    np.mean(si_phi_ozs, axis=0)[-7:])
-
-print('hard: marginal mean estimates last elements phi',
-	    np.mean(si_phi_hard, axis=0)[-7:])
-
-print('soft: marginal mean estimates last elements phi',
-	    np.mean(si_phi_soft, axis=0)[-7:])
-
-si_vars_phi_ozs = np.var(si_phi_ozs, axis=0)
-print('ozs: marginal variances last elements phi', si_vars_phi_ozs[-7:])
-
-si_vars_phi_hard = np.var(si_phi_hard, axis=0)
-print('hard: marginal variances last elements phi', si_vars_phi_hard[-7:])
-
-si_vars_phi_soft = np.var(si_phi_soft, axis=0)
-print('soft: marginal variances last elements phi', si_vars_phi_soft[-7:])
-```
-
-```{python}
-from utils_dataviz import marginal_variances_boxplot
-boxplot = marginal_variances_boxplot(
-    ["1.ozs", "2.hard", "3.soft"],
-    [si_vars_phi_ozs, si_vars_phi_hard, si_vars_phi_soft]
-)
-boxplot
-```
-
 #### Discussion
 
 All implementations return almost identical estimates.
@@ -1210,7 +1176,7 @@ They provide the following recommendations:
 
 We have followed these recommendations and implemented this model in Stan.
 The full implementation details can be found in the notebook
-* [The BYM2_multicomp model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/h6_bym2_multicomp.ipynb)
+* [The BYM2_multicomp model in Stan](https://github.com/mitzimorris/geomed_2024/blob/main/python-notebooks/h6_bym2_multicomp.ipynb)
 
 For this case study, we provide 2 implementations of the BYM2_multicomp model:
 one which uses the `sum_to_zero_vector` and one which implements the soft sum-to-zero constraint.
@@ -1359,7 +1325,13 @@ bym2_multicomp_ozs_fit = bym2_multicomp_ozs_mod.sample(data=bym2_multicomp_data,
 
 ```{python}
 bym2_multicomp_ozs_summary = bym2_multicomp_ozs_fit.summary()
-bym2_multicomp_ozs_summary.round(2).loc[
+ozs_fit_timing = bym2_multicomp_ozs_fit.timing
+ozs_total_time = 0
+for i in range(len(ozs_fit_timing)):
+    ozs_total_time += ozs_fit_timing[i]['total']
+bym2_multicomp_ozs_summary['ESS/sec'] = bym2_multicomp_ozs_summary['ESS_bulk']/ozs_total_time
+
+bym2_multicomp_ozs_summary[['Mean', 'StdDev', 'ESS_bulk', 'ESS/sec', 'R_hat']].round(2).loc[
   ['beta_intercept', 'beta0', 'betas[1]', 'betas[2]', 'betas[3]', 'betas[4]', 'sigma', 'rho']]
 ```
 
@@ -1414,7 +1386,14 @@ We compare the result of both implementations.
 
 ```{python}
 bym2_multicomp_ozs_summary.index =  bym2_multicomp_ozs_summary.index.astype(str) + "  a) ozs"
+
 bym2_multicomp_soft_summary.index =  bym2_multicomp_soft_summary.index.astype(str) + "  b) soft"
+soft_fit_timing = bym2_multicomp_soft_fit.timing
+soft_total_time = 0
+for i in range(len(soft_fit_timing)):
+    soft_total_time += soft_fit_timing[i]['total']
+bym2_multicomp_soft_summary['ESS/sec'] = bym2_multicomp_soft_summary['ESS_bulk']/soft_total_time
+
 bym2_multicomp_summary = pd.concat([bym2_multicomp_ozs_summary, bym2_multicomp_soft_summary])
 
 beta_summary = summarize_predictor(bym2_multicomp_summary, 'beta')
@@ -1443,9 +1422,11 @@ The dramatic difference in run times speaks for itself.
 
 The more complex the model, the greater the need for the `sum_to_zero_vector`.
 When considering the effective sample size, it is important to remember that
-what is most important is effective samples **per second**, therefore,
-given that the `sum_to_zero_vector` models consistently have the best
-wall-clock time for all datasets, they also have the highest ESS/sec.
+what is most important is effective samples **per second**.
+In these experiments, the `sum_to_zero_vector` models consistently have the best wall-clock time
+and the highest ESS/sec.
+
+
 
 
 
