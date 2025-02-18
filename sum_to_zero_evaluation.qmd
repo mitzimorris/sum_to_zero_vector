@@ -34,6 +34,9 @@ from splot.libpysal import plot_spatial_weights
 from random import randint
 
 from cmdstanpy import CmdStanModel, write_stan_json, cmdstan_path, cmdstan_version, rebuild_cmdstan
+import logging
+cmdstanpy_logger = logging.getLogger("cmdstanpy")
+cmdstanpy_logger.setLevel(logging.ERROR)
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -500,6 +503,9 @@ binomial_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds_
 
 ```{python}
 binomial_ozs_fit = binomial_ozs_mod.sample(data=data_small, parallel_chains=4)
+
+print("sum_to_zero_vector: runtimes in seconds, all chains")
+binomial_ozs_fit.time
 ```
 
 Record the seed used for the first run and use it for all subsequent fits.
@@ -510,6 +516,9 @@ a_seed = binomial_ozs_fit.metadata.cmdstan_config['seed']
 
 ```{python}
 binomial_ozs_fit_lg = binomial_ozs_mod.sample(data=data_large, parallel_chains=4, seed=a_seed)
+
+print("sum_to_zero_vector, large: runtimes in seconds, all chains")
+binomial_ozs_fit_lg.time
 ```
 
 #### Model 2:  Hard sum-to-zero constraint
@@ -522,10 +531,16 @@ binomial_hard_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds
 
 ```{python}
 binomial_hard_fit = binomial_hard_mod.sample(data=data_small, parallel_chains=4, seed=a_seed)
+
+print("hard sum-to-zero: runtimes in seconds, all chains")	
+binomial_hard_fit.time
 ```
 
 ```{python}
 binomial_hard_fit_lg = binomial_hard_mod.sample(data=data_large, parallel_chains=4, seed=a_seed)
+
+print("hard sum-to-zero, large: runtimes in seconds, all chains")	
+binomial_hard_fit_lg.time
 ```
 
 #### Model 3:  soft sum-to-zero constraint
@@ -536,10 +551,16 @@ binomial_soft_mod = CmdStanModel(stan_file=os.path.join('stan', 'binomial_4preds
 
 ```{python}
 binomial_soft_fit = binomial_soft_mod.sample(data=data_small, parallel_chains=4, seed=a_seed)
+
+print("soft sum-to-zero: runtimes in seconds, all chains")	
+binomial_soft_fit.time
 ```
 
 ```{python}
 binomial_soft_fit_lg = binomial_soft_mod.sample(data=data_large, parallel_chains=4, seed=a_seed)
+
+print("soft sum-to-zero, large: runtimes in seconds, all chains")	
+binomial_soft_fit_lg.time
 ```
 
 #### Runtime performance
@@ -934,6 +955,9 @@ including hyperparameters `rho` and `sigma`.
 ```{python}
 bym2_ozs_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_ozs.stan'))
 brklyn_qns_ozs_fit = bym2_ozs_mod.sample(data=brklyn_qns_data, iter_warmup=5000)
+
+print("sum_to_zero_vector: runtimes in seconds, all chains")	
+brklyn_qns_ozs_fit.time
 ```
 
 ```{python}
@@ -943,11 +967,17 @@ a_seed = brklyn_qns_ozs_fit.metadata.cmdstan_config['seed']
 ```{python}
 bym2_soft_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_soft.stan'))
 brklyn_qns_soft_fit = bym2_soft_mod.sample(data=brklyn_qns_data, iter_warmup=5000, seed=a_seed)
+
+print("soft sum-to-zero: runtimes in seconds, all chains")	
+brklyn_qns_soft_fit.time
 ```
 
 ```{python}
 bym2_hard_mod = CmdStanModel(stan_file=os.path.join('stan', 'bym2_hard.stan'))
 brklyn_qns_hard_fit = bym2_hard_mod.sample(data=brklyn_qns_data, iter_warmup=5000, seed=a_seed)
+
+print("hard sum-to-zero: runtimes in seconds, all chains")	
+brklyn_qns_hard_fit.time
 ```
 
 #### Model Comparison
@@ -1074,6 +1104,9 @@ bronx_data = {"N":bronx_gdf.shape[0],
 
 ```{python}
 bronx_ozs_fit = bym2_ozs_mod.sample(data=bronx_data, iter_warmup=5000)
+
+print("sum_to_zero_vector: runtimes in seconds, all chains")	
+bronx_ozs_fit.time
 ```
 
 ```{python}
@@ -1082,10 +1115,16 @@ a_seed = bronx_ozs_fit.metadata.cmdstan_config['seed']
 
 ```{python}
 bronx_soft_fit = bym2_soft_mod.sample(data=bronx_data, iter_warmup=5000, seed=a_seed)
+
+print("soft sum-to-zero: runtimes in seconds, all chains")	
+bronx_soft_fit.time
 ```
 
 ```{python}
 bronx_hard_fit = bym2_hard_mod.sample(data=bronx_data, iter_warmup=5000, seed=a_seed)
+
+print("hard sum-to-zero: runtimes in seconds, all chains")	
+bronx_hard_fit.time
 ```
 
 ```{python}
@@ -1321,6 +1360,9 @@ bym2_multicomp_ozs_mod = CmdStanModel(stan_file=bym2_multicomp_ozs_file)
 
 ```{python}
 bym2_multicomp_ozs_fit = bym2_multicomp_ozs_mod.sample(data=bym2_multicomp_data, iter_warmup=5000)
+
+print("sum_to_zero_vector: runtimes in seconds, all chains")	
+bym2_multicomp_ozs_fit.time
 ```
 
 ```{python}
@@ -1375,6 +1417,9 @@ all iterations hit this limit.
 
 ```{python}
 bym2_multicomp_soft_fit = bym2_multicomp_soft_mod.sample(data=bym2_multicomp_data, iter_warmup=3000, max_treedepth=14, seed=a_seed)
+
+print("soft sum-to-zero: runtimes in seconds, all chains")	
+bym2_multicomp_soft_fit.time
 ```
 
 ```{python}
