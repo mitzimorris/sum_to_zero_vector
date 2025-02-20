@@ -3,11 +3,13 @@ title: "The Sum-to-Zero Constraint in Stan"
 format:
   html:
     theme:
-      - cosmo
-      - quarto-config/theme.scss
+      light: [cosmo, quarto-config/theme.scss]
+      dark: [cosmo, quarto-config/theme-dark.scss]
     syntax-definitions:
       - quarto-config/stan.xml
-    highlight-style: quarto-config/tango.theme
+    highlight-style:
+      light: quarto-config/tango.theme
+      dark: quarto-config/nord.theme
     code-copy: true
     code-overflow: wrap
     code-fold: true
@@ -1359,7 +1361,7 @@ bym2_multicomp_ozs_mod = CmdStanModel(stan_file=bym2_multicomp_ozs_file)
 ```
 
 ```{python}
-bym2_multicomp_ozs_fit = bym2_multicomp_ozs_mod.sample(data=bym2_multicomp_data, iter_warmup=5000)
+bym2_multicomp_ozs_fit = bym2_multicomp_ozs_mod.sample(data=bym2_multicomp_data, iter_warmup=3000)
 
 print("sum_to_zero_vector: runtimes in seconds, all chains")	
 bym2_multicomp_ozs_fit.time
@@ -1461,20 +1463,27 @@ was much faster than the hard sum-to-zero constraint.  Here we show that the
 For the BYM2_multicomp model, the soft sum-to-zero implementation is painfully slow.
 Both implementation get exactly the same estimates, which simply confirms that
 both models are correctly implemented.
-The dramatic difference in run times speaks for itself.
+
+Although the `ESS_bulk` numbers for the both implmentations are roughly comparable,
+the `ESS_sec` for the `sum_to_zero_vector` implementation is over 12 times faster.
 
 ## Conclusion: the `sum_to_zero_vector` just works!
 
 The more complex the model, the greater the need for the `sum_to_zero_vector`.
-When considering the effective sample size, it is important to remember that
-what is most important is effective samples **per second**.
-In these experiments, the `sum_to_zero_vector` models consistently have the best wall-clock time
-and the highest ESS/sec.
 
 
+## References
 
+* Seybolt, 2024: [Add ZeroSumNormal distribution](https://github.com/pyro-ppl/numpyro/pull/1751#issuecomment-1980569811)
 
+* Gelman and Carpenter, 2020: [Bayesian Analysis of Tests with Unknown Specificity and Sensitivity](https://doi.org/10.1111/rssc.12435)
 
+* Riebler et al., 2016: [An intuitive Bayesian spatial model for disease mapping that accounts for scaling](https://arxiv.org/abs/1601.01180)
 
+* Freni-Sterrantino et al.,2018: [A note on intrinsic conditional autoregressive models for disconnected graphs](https://arxiv.org/pdf/1705.04854.pdf)
+
+* Morris et al., 2019: [Bayesian Hierarchical Spatial Models: Implementing the Besag York Mollié Model in Stan](https://www.sciencedirect.com/science/article/abs/pii/S1877584518301175)
+
+* Stan Development Team: [Stan Documentation Suite](https://mc-stan.org/docs/)
 
 
