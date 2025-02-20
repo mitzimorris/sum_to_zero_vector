@@ -1,5 +1,10 @@
 ---
 title: "The Sum-to-Zero Constraint in Stan"
+author:
+  - name: Mitzi Morris
+  - affiliation: 
+      - name: Stan Development Team
+        url: mc-stan.org
 format:
   html:
     theme:
