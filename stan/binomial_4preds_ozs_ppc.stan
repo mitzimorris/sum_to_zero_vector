@@ -1,13 +1,10 @@
-// multi-level model for binomial data with 4 categorical predictors.
+// generate sample from model priors, (before seeing any data)
 data {
   int<lower=1> N; // number of strata
   int<lower=1> N_age;
   int<lower=1> N_eth;
   int<lower=1> N_edu;
-
-  // hyperparameters
-  real<lower=0, upper=1> sens;
-  real<lower=0, upper=1> spec;
+  // omit observational data
 }
 transformed data {
   // scaling factors for marginal variances of sum_to_zero_vectors
@@ -25,6 +22,7 @@ parameters {
   sum_to_zero_vector[N_edu] beta_edu;
 }
 model {
+  // omit likelihood
   // priors
   beta_0 ~ normal(0, 2.5);
   beta_sex ~ std_normal();
