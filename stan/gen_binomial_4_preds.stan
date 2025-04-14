@@ -21,14 +21,6 @@ generated quantities {
   for (n in 1:N_age) {
     beta_age[n] = std_normal_rng();
   }
-  // increased risk with age, some variation in observations
-  // {
-  // vector[N_age] beta_age_tmp;
-  // for (n in 1:N_age) {
-  // beta_age_tmp[n] = normal_rng(0, 1);
-  // }
-  // beta_age = sort_asc(beta_age_tmp);
-  // }
 
   vector[N_eth] pct_eth = dirichlet_rng(rep_vector(1, N_eth));
   vector[N_eth] beta_eth;
@@ -41,14 +33,6 @@ generated quantities {
   for (n in 1:N_edu) {
     beta_edu[n] = std_normal_rng();
   }
-  // decreased risk with edu, some variation in observations
-  // {
-  // vector[N_edu] beta_edu_tmp;
-  // for (n in 1:N_edu) {
-  // beta_edu_tmp[n] = normal_rng(0, 1);
-  // }
-  // beta_edu = sort_desc(beta_edu_tmp);
-  // }
 
   array[strata] int sex, age, eth, edu, pos_tests, tests;
   array[strata] real p;
