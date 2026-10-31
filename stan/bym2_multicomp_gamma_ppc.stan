@@ -3,11 +3,10 @@ functions {
    * Component-wise constrain sum-to-zero vectors
    *
    * @param phi unconstrained vector of zero-sum slices
-   * @param idxs component start and end indices
    * @param sizes component sizes
    * @return vector phi_ozs, the vector whose slices sum to zero
    */
-  vector zero_sum_components_lp(vector phi, array[ , ] int idxs, array[] int sizes) {
+  vector zero_sum_components_lp(vector phi, array[] int sizes) {
     vector[sum(sizes)] phi_ozs;
     int idx_phi = 1;
     int idx_ozs = 1;
@@ -87,7 +86,7 @@ parameters {
 }
 
 transformed parameters {
-  vector[N_connected] phi = zero_sum_components_lp(phi_raw, component_idxs, component_sizes);
+  vector[N_connected] phi = zero_sum_components_lp(phi_raw, component_sizes);
   vector[N] gamma;  // BYM2, per Freni-Sterrantino
   gamma[1 : N_connected] = sqrt(1 - rho) * theta + sqrt(rho * inv(taus)) .* phi;
   gamma[N_connected + 1 : N] = singletons_re;
